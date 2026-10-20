@@ -340,17 +340,21 @@ class MainWindow(QMainWindow, Pages):
         self.cache_usage.setAccessibleName(f"已用 {used:.0f} MB，上限 {limit:.0f} MB")
         lib_count, lib_mb = data.get("lib_count", 0), data.get("lib_mb", 0)
         wd_count, wd_mb = data.get("wd_count", 0), data.get("wd_mb", 0)
-        if self.controller.config().get("library_dir"):
-            text = f"PyPyDance：{lib_count} 个视频 · {bytes_text(lib_mb * 1024**2)}"
-            if wd_count:
-                text += f"　|　WannaDance：{wd_count} 个 · {bytes_text(wd_mb * 1024**2)}"
-            self.library_summary.setText(text)
+        cfg = self.controller.config()
+        if cfg.get("library_dir"):
+            self.library_summary.setText(
+                f"PyPyDance：{lib_count} 个视频 · {bytes_text(lib_mb * 1024**2)}")
+        elif cfg.get("cdn_permanent") or cfg.get("youtube_permanent"):
+            self.library_summary.setText("PyPyDance：尚未设置曲库目录（永久保存暂缓生效，填写目录后自动启用）")
         else:
-            cfg = self.controller.config()
-            if cfg.get("cdn_permanent") or cfg.get("wd_permanent") or cfg.get("youtube_permanent"):
-                self.library_summary.setText("尚未设置曲库目录（永久保存暂缓生效，填写目录后自动启用）")
-            else:
-                self.library_summary.setText("尚未设置曲库目录")
+            self.library_summary.setText("PyPyDance：尚未设置曲库目录")
+        if cfg.get("wd_library_dir"):
+            self.wd_library_summary.setText(
+                f"WannaDance：{wd_count} 个视频 · {bytes_text(wd_mb * 1024**2)}")
+        elif cfg.get("wd_permanent"):
+            self.wd_library_summary.setText("WannaDance：尚未设置曲库目录（永久保存暂缓生效，填写目录后自动启用）")
+        else:
+            self.wd_library_summary.setText("WannaDance：尚未设置曲库目录")
     def resize_tables(self):
         for widget, limit in ((self.queue_table, 4), (self.download_table, 3), (self.scan_table, 4), (self.favorites_table, 6)):
             rows = min(limit, widget.rowCount())
@@ -365,6 +369,7 @@ class MainWindow(QMainWindow, Pages):
                 self.cache_path.setText(config["cache_dir"])
                 self.cache_limit.setValue(config["max_cache_mb"])
                 self.library_path.setText(config["library_dir"])
+                self.wd_library_path.setText(config.get("wd_library_dir", ""))
                 self.cdn_permanent.setChecked(config["cdn_permanent"])
                 self.wd_permanent.setChecked(config.get("wd_permanent", False))
                 self.youtube_permanent.setChecked(config["youtube_permanent"])
@@ -392,6 +397,7 @@ class MainWindow(QMainWindow, Pages):
     def apply_settings(self, section):
         if section == "storage":
             patch = {"max_cache_mb": self.cache_limit.value(), "library_dir": self.library_path.text().strip(),
+                     "wd_library_dir": self.wd_library_path.text().strip(),
                      "cdn_permanent": self.cdn_permanent.isChecked(), "wd_permanent": self.wd_permanent.isChecked(),
                      "youtube_permanent": self.youtube_permanent.isChecked()}
         else:
@@ -455,6 +461,18 @@ class MainWindow(QMainWindow, Pages):
         path = QFileDialog.getExistingDirectory(self, "选择永久曲库目录", self.library_path.text())
         if path:
             self.library_path.setText(path)
+
+    def browse_wd_library(self):
+        path = QFileDialog.getExistingDirectory(self, "选择 WannaDance 曲库目录", self.wd_library_path.text())
+        if path:
+            self.wd_library_path.setText(path)
+
+    def open_wd_library(self):
+        saved = self.controller.config().get("wd_library_dir", "")
+        if not saved:
+            self.notify("请先选择 WannaDance 曲库目录并应用更改。")
+            return
+        self.controller.open_directory(saved)
 
     def browse_cooldown(self):
         path, _ = QFileDialog.getOpenFileName(self, "选择放松视频", self.cooldown_path.text(), "MP4 视频 (*.mp4)")

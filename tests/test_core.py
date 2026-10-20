@@ -570,7 +570,7 @@ class CoreTests(unittest.TestCase):
             self.assertTrue(state["running"])
             self.assertFalse(state["youtube_available"])
             self.assertFalse(state["queue_watcher_available"])
-            self.assertEqual(len(state["warnings"]), 2)
+            self.assertEqual(len(state["warnings"]), 3)
             hijack.assert_called_once_with(False)
             self.dc.stop_services()
             self.assertEqual(self.dc.get_runtime_state()["phase"], "stopped")

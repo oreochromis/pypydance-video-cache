@@ -70,6 +70,7 @@ def hijack_host_list(include_api):
 DEFAULT_CONFIG = {
     "cache_dir": "cache",
     "library_dir": "",
+    "wd_library_dir": "",
     "max_cache_mb": 2048,
     "preload_count": 3,
     "max_parallel": 2,
@@ -199,7 +200,7 @@ def load_config():
             warnings.append(f"config.json 参数无效，已恢复默认参数并保留可读取的保存目录: {e}")
             preserved = {}
             if isinstance(loaded, dict):
-                for name in ("cache_dir", "library_dir"):
+                for name in ("cache_dir", "library_dir", "wd_library_dir"):
                     if isinstance(loaded.get(name), str) and loaded[name].strip():
                         preserved[name] = loaded[name]
             cfg = _validated_config({**DEFAULT_CONFIG, **preserved}, allow_shared_storage=True)
@@ -215,10 +216,20 @@ def load_config():
             cfg["library_dir"] = ""
             cfg["youtube_permanent"] = False
             cfg["cdn_permanent"] = False
+    wd_lib = cfg.get("wd_library_dir") or ""
+    if wd_lib:
+        try:
+            os.makedirs(wd_lib, exist_ok=True)
+        except Exception as e:
+            warnings.append(f"WannaDance 曲库目录不可用，已停用其永久保存: {e}")
+            cfg["wd_library_dir"] = ""
+            cfg["wd_permanent"] = False
     with _config_lock:
         _config = cfg
     if _same_directory(cfg["cache_dir"], cfg.get("library_dir")):
         warnings.append("缓存目录与永久曲库相同，已禁用服务启动与缓存清理，请在设置中分开保存目录")
+    if _same_directory(cfg["cache_dir"], cfg.get("wd_library_dir")):
+        warnings.append("缓存目录与 WannaDance 曲库相同，已禁用服务启动，请在设置中分开保存目录")
     for warning in warnings:
         log(warning)
         emit("warning", message=warning)
@@ -250,17 +261,21 @@ def _validated_config(config, *, allow_shared_storage=False):
     for name in ("enable_youtube_cache", "youtube_permanent", "cdn_permanent", "wd_permanent"):
         if not isinstance(cfg.get(name), bool):
             raise ValueError(f"{name} 必须是布尔值")
-    for name in ("cache_dir", "library_dir", "preferred_cdn_ip", "cooldown_file"):
+    for name in ("cache_dir", "library_dir", "wd_library_dir", "preferred_cdn_ip", "cooldown_file"):
         if not isinstance(cfg.get(name), str):
             raise ValueError(f"{name} 必须是文本")
         cfg[name] = cfg[name].strip()
     if not cfg["cache_dir"]:
         raise ValueError("缓存目录不能为空")
-    for name in ("cache_dir", "library_dir", "cooldown_file"):
+    for name in ("cache_dir", "library_dir", "wd_library_dir", "cooldown_file"):
         if cfg[name]:
             cfg[name] = os.path.abspath(os.path.join(SCRIPT_DIR, os.path.expanduser(cfg[name])))
     if not allow_shared_storage and _same_directory(cfg["cache_dir"], cfg["library_dir"]):
         raise ValueError("缓存目录与永久曲库不能是同一个目录")
+    if not allow_shared_storage and _same_directory(cfg["cache_dir"], cfg["wd_library_dir"]):
+        raise ValueError("缓存目录与 WannaDance 曲库不能是同一个目录")
+    if not allow_shared_storage and cfg["library_dir"] and _same_directory(cfg["library_dir"], cfg["wd_library_dir"]):
+        raise ValueError("PyPyDance 曲库与 WannaDance 曲库不能是同一个目录")
     ip = cfg["preferred_cdn_ip"]
     if ip:
         try:
@@ -514,14 +529,19 @@ def wd_cache_name(song_id):
     return f"wd_{song_id}.mp4"
 
 
+def wd_library_enabled():
+    d = _config.get("wd_library_dir") or ""
+    return bool(d) and os.path.isdir(d)
+
+
 def wd_library_path(song_id):
-    """WannaDance 永久保存到曲库目录下的 wannadance 子目录，与 PyPyDance 物理隔离"""
-    return os.path.join(_config.get("library_dir") or "", "wannadance", wd_cache_name(song_id))
+    """WannaDance 永久曲库独立目录，与 PyPyDance 曲库分开配置"""
+    return os.path.join(_config.get("wd_library_dir") or "", wd_cache_name(song_id))
 
 
 def wd_local_path(song_id):
-    """WannaDance 本地文件：曲库 wd_{id}.mp4 优先，其次普通缓存目录"""
-    if library_enabled():
+    """WannaDance 本地文件：独立曲库 wd_{id}.mp4 优先，其次普通缓存目录"""
+    if wd_library_enabled():
         p = wd_library_path(song_id)
         if _nonempty_file(p):
             return p
@@ -532,10 +552,13 @@ def wd_local_path(song_id):
 
 
 def wd_target_path(song_id):
-    """WannaDance 新下载保存位置：曲库模式且"WannaDance永久保存"开启时进曲库子目录，否则进普通缓存"""
-    if library_enabled() and _config.get("wd_permanent", False):
+    """WannaDance 新下载保存位置：独立曲库已设置且"WannaDance永久保存"开启时进曲库，否则进普通缓存"""
+    if _config.get("wd_permanent", False) and (_config.get("wd_library_dir") or "").strip():
         target = wd_library_path(song_id)
-        os.makedirs(os.path.dirname(target), exist_ok=True)
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+        except OSError:
+            return cache_path(wd_cache_name(song_id))
         return target
     return cache_path(wd_cache_name(song_id))
 
@@ -593,8 +616,9 @@ def get_cache_stats():
                     lib_total += os.path.getsize(p)
         except Exception:
             pass
+    if wd_library_enabled():
         try:
-            wd_dir = os.path.join(_config["library_dir"], "wannadance")
+            wd_dir = _config["wd_library_dir"]
             for name in os.listdir(wd_dir):
                 p = os.path.join(wd_dir, name)
                 if WD_CACHE_RE.match(name) and os.path.isfile(p):
@@ -2405,6 +2429,10 @@ def start_services():
             error = "缓存目录与永久曲库相同，请先在设置中分开保存目录再启动服务"
             _set_runtime_state(phase="failed", running=False, error=error)
             return error
+        if _same_directory(_config.get("cache_dir"), _config.get("wd_library_dir")):
+            error = "缓存目录与 WannaDance 曲库相同，请先在设置中分开保存目录再启动服务"
+            _set_runtime_state(phase="failed", running=False, error=error)
+            return error
         with _downloads_lock:
             finishing = bool(_downloads_in_progress)
         if finishing or rebuilding() or verifying() or any(t.is_alive() for t in _service_threads):
@@ -2424,9 +2452,11 @@ def start_services():
         try:
             log("正在解析真实服务器 IP...")
             resolve_real_ips()
-            if (any(_config.get(k) for k in ("youtube_permanent", "cdn_permanent", "wd_permanent"))
+            if (any(_config.get(k) for k in ("youtube_permanent", "cdn_permanent"))
                     and not (_config.get("library_dir") or "").strip()):
-                warnings.append("永久保存已开启但未设置曲库目录，暂缓生效；在存储页填写曲库目录后自动启用")
+                warnings.append("PyPyDance 永久保存已开启但未设置曲库目录，暂缓生效；在存储页填写曲库目录后自动启用")
+            if _config.get("wd_permanent") and not (_config.get("wd_library_dir") or "").strip():
+                warnings.append("WannaDance 永久保存已开启但未设置 WannaDance 曲库目录，暂缓生效；在存储页填写后自动启用")
             if _stop_event.is_set():
                 raise _StartCancelled()
             if not _origin_ips.get("cdn.pypy.dance"):
