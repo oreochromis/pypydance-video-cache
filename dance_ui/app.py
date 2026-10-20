@@ -32,7 +32,7 @@ STATES = {
     "unresolved": ("待解析", "muted"), "not_cached": ("未缓存", "muted"),
     "cooldown": ("放松视频", "warning"),
 }
-SOURCE_NAMES = {"cdn": "CDN", "youtube": "YouTube", "external": "外部源"}
+SOURCE_NAMES = {"cdn": "CDN", "youtube": "YouTube", "wannadance": "WannaDance", "external": "外部源"}
 
 
 class MainWindow(QMainWindow, Pages):

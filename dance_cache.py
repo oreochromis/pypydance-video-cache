@@ -50,13 +50,22 @@ HOSTS_PATH = r"C:\Windows\System32\drivers\etc\hosts"
 HOSTS_MARK = "# dance-cache"
 CDN_HOSTS = ["cdn.pypy.dance", "806bb815.cdn.pypy.dance"]
 API_HOST = "api.pypy.dance"
+UDON_API_HOST = "api.udon.dance"    # WannaDance：302 跳转服务（不劫持，仅解析真实 IP 供预载用）
+UDON_PLAY_HOST = "play.udon.dance"  # WannaDance：视频文件 CDN（劫持）
 HIJACK_HOSTS = CDN_HOSTS + [API_HOST]  # api 仅在 YouTube 缓存模式启用时劫持
 VRC_LOG_DIR = os.path.join(os.environ.get("USERPROFILE", ""), "AppData", "LocalLow", "VRChat", "VRChat")
 MAPPING_PATH = os.path.join(SCRIPT_DIR, "mapping.json")
 
 QUEUE_RE = re.compile(r"^\[PyPyDanceQueue] (\[.*])")
+WD_QUEUE_RE = re.compile(r"queue info serialized: (\[.*])")  # WannaDance 队列
 FILENAME_RE = re.compile(r"^[\w.\-]+\.mp4$")
 YT_FILENAME_RE = re.compile(r"^yt_(\d+)\.mp4$")
+WD_FILE_RE = re.compile(r"^(\d+)-[0-9a-z]+\.mp4$", re.IGNORECASE)  # play.udon.dance 的文件名 5283-667d628852a98.mp4
+WD_CACHE_RE = re.compile(r"^wd_(\d+)\.mp4$")  # WannaDance 本地缓存命名
+
+
+def hijack_host_list(include_api):
+    return CDN_HOSTS + [UDON_PLAY_HOST] + ([API_HOST] if include_api else [])
 
 DEFAULT_CONFIG = {
     "cache_dir": "cache",
@@ -499,6 +508,35 @@ def yt_target_path(song_id):
     return cache_path(f"yt_{song_id}.mp4")
 
 
+# ---------------- WannaDance 源支持（api.udon.dance 302 -> play.udon.dance 文件） ----------------
+
+def wd_cache_name(song_id):
+    return f"wd_{song_id}.mp4"
+
+
+def wd_library_path(song_id):
+    return os.path.join(_config.get("library_dir") or "", wd_cache_name(song_id))
+
+
+def wd_local_path(song_id):
+    """WannaDance 本地文件：曲库 wd_{id}.mp4 优先，其次普通缓存目录"""
+    if library_enabled():
+        p = wd_library_path(song_id)
+        if _nonempty_file(p):
+            return p
+    p = cache_path(wd_cache_name(song_id))
+    if _nonempty_file(p):
+        return p
+    return None
+
+
+def wd_target_path(song_id):
+    """WannaDance 新下载保存位置：曲库模式且"其他视频永久保存"开启时进曲库，否则进普通缓存"""
+    if library_enabled() and _config.get("cdn_permanent", False):
+        return wd_library_path(song_id)
+    return cache_path(wd_cache_name(song_id))
+
+
 def learn_mapping_from_redirect(song_num, loc):
     """从 /video 的 302 Location 学习映射：CDN 记文件名，YouTube 记 yt:地址"""
     u = urllib.parse.urlparse(loc)
@@ -625,7 +663,7 @@ def ensure_admin():
 
 def resolve_real_ips():
     _origin_ips.clear()
-    for host in HIJACK_HOSTS:
+    for host in HIJACK_HOSTS + [UDON_API_HOST, UDON_PLAY_HOST]:
         ips = []
         try:
             _, _, ips = __import__("socket").gethostbyname_ex(host)
@@ -738,7 +776,7 @@ def hijack_hosts(include_api=False):
             content = f.read()
         with open(HOSTS_PATH + ".dance-cache.bak", "w", encoding="utf-8") as f:
             f.write(content)
-        hosts = CDN_HOSTS + ([API_HOST] if include_api else [])
+        hosts = hijack_host_list(include_api)
         with open(HOSTS_PATH, "a", encoding="utf-8") as f:
             if not content.endswith("\n"):
                 f.write("\n")
@@ -759,7 +797,7 @@ def restore_hosts():
 
 def _hosts_watchdog_loop(include_api):
     """运行期间定期检查 hosts 劫持条目，被外部清除（如加速器恢复备份）时自动重写"""
-    expected = CDN_HOSTS + ([API_HOST] if include_api else [])
+    expected = hijack_host_list(include_api)
     while not _stop_event.wait(15):
         try:
             # 与最终恢复串行，防止停止期间在恢复后重新写回劫持条目。
@@ -1161,6 +1199,70 @@ def start_background_download(filename, song_id=None):
         if _canonical_path(target) in _downloads_in_progress:
             return
     threading.Thread(target=download_file, args=(filename, song_id), daemon=True).start()
+
+
+def download_wd(song_id):
+    """WannaDance 完整下载：api.udon.dance/Api/Songs/play?id=N 302 到 play.udon.dance 文件。
+    文件名本身带编号，无需映射表。"""
+    target = wd_target_path(song_id)
+    if os.path.isfile(target) and os.path.getsize(target) > 0:
+        return True
+    name = wd_cache_name(song_id)
+    run_id = _run_id
+    meta = _begin_download(target, name, None, "wannadance")
+    if meta is None:
+        return False
+    part = target + ".part"
+    ok = False
+    error = None
+    done = total = 0
+    conn = None
+    eof = False
+    try:
+        conn, resp = open_upstream(UDON_API_HOST, f"/Api/Songs/play?id={song_id}")
+        if resp.status != 200:
+            raise RuntimeError(f"HTTP {resp.status}")
+        total = int(resp.getheader("Content-Length") or 0)
+        with open(part, "wb") as f:
+            while not _cancelled(run_id):
+                chunk = resp.read(256 * 1024)
+                if not chunk:
+                    eof = True
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                emit_progress(name, done, total, meta["task_id"])
+        if not _cancelled(run_id) and eof and done > 0 and (total == 0 or done == total):
+            _commit_download(part, target, done)
+            ok = True
+            log(f"缓存完成 {os.path.basename(target)} ({done / 1048576:.1f} MB)")
+        elif not _cancelled(run_id):
+            error = f"下载不完整 ({done}/{total})"
+            log(f"{name}: {error}")
+    except Exception as e:
+        error = str(e)
+        log(f"下载 {name} 出错: {e}")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        cancelled = not ok and _cancelled(run_id)
+        if not ok:
+            _remove_part(part)
+        _finish_download(meta, ok, cancelled, None if cancelled else error, done, total)
+    return ok
+
+
+def start_wd_download(song_id):
+    target = wd_target_path(song_id)
+    if os.path.exists(target) and os.path.getsize(target) > 0:
+        return
+    with _downloads_lock:
+        if _canonical_path(target) in _downloads_in_progress:
+            return
+    threading.Thread(target=download_wd, args=(song_id,), daemon=True).start()
 
 
 # ---------------- YouTube 源录流（从 VRChat 日志捕获播放中的直链） ----------------
@@ -1619,6 +1721,8 @@ class DanceHandler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         if self._host() == API_HOST:
             return self._handle_api(head_only=True)
+        if self._host() == UDON_PLAY_HOST:
+            return self._handle_udon(head_only=True)
         name = self._filename()
         if not name:
             self.send_error(404)
@@ -1636,6 +1740,8 @@ class DanceHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self._host() == API_HOST:
             return self._handle_api()
+        if self._host() == UDON_PLAY_HOST:
+            return self._handle_udon()
         name = self._filename()
         if not name:
             self.send_error(404)
@@ -1650,6 +1756,41 @@ class DanceHandler(BaseHTTPRequestHandler):
         else:
             log(f"本地未命中 {name}，回源拉取")
             self._proxy()
+
+    # ---------------- play.udon.dance（WannaDance）处理 ----------------
+
+    def _handle_udon(self, head_only=False):
+        """play.udon.dance/files/XXXX/{id}-{hash}.mp4?e=..&s=.. -> wd_{id}.mp4 本地缓存"""
+        path = urllib.parse.urlparse(self.path).path
+        m = WD_FILE_RE.match(os.path.basename(path))
+        if not m:
+            self.send_error(404)
+            return
+        sid = int(m.group(1))
+        name = wd_cache_name(sid)
+        if head_only:
+            p = cooldown_check(name) or wd_local_path(sid)
+            if p:
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", str(os.path.getsize(p)))
+                self.send_header("Accept-Ranges", "bytes")
+                self.end_headers()
+            else:
+                self._proxy(head_only=True, upstream_host=UDON_PLAY_HOST,
+                            upstream_path=self.path, name=name, wd_id=sid)
+            return
+        replacement = cooldown_check(name)
+        p = replacement or wd_local_path(sid)
+        if p:
+            log(f"本地命中 {name} (WannaDance) -> {os.path.basename(p)}")
+            if not replacement:
+                touch(p)
+            self._serve_file(p)
+        else:
+            log(f"本地未命中 {name} (WannaDance)，回源拉取")
+            self._proxy(upstream_host=UDON_PLAY_HOST, upstream_path=self.path,
+                        name=name, wd_id=sid)
 
     # ---------------- api.pypy.dance 处理 ----------------
 
@@ -1741,8 +1882,11 @@ class DanceHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
 
-    def _proxy(self, head_only=False):
-        name = self._filename()
+    def _proxy(self, head_only=False, upstream_host="cdn.pypy.dance", upstream_path=None, name=None, wd_id=None):
+        if name is None:
+            name = self._filename()
+        if upstream_path is None:
+            upstream_path = "/" + name
         run_id = _run_id
         range_header = self.headers.get("Range")
         extra = {"Range": range_header} if range_header else None
@@ -1753,7 +1897,7 @@ class DanceHandler(BaseHTTPRequestHandler):
         saved = total = 0
         error = None
         try:
-            conn, resp = open_upstream("cdn.pypy.dance", "/" + name, extra_headers=extra)
+            conn, resp = open_upstream(upstream_host, upstream_path, extra_headers=extra)
             if _cancelled(run_id):
                 return
             self.send_response(resp.status)
@@ -1769,9 +1913,12 @@ class DanceHandler(BaseHTTPRequestHandler):
 
             # 错误正文与服务器未按完整请求返回的片段只透传，绝不登记为缓存。
             if range_header and resp.status in (200, 206):
-                start_background_download(name)
+                if wd_id is not None:
+                    start_wd_download(wd_id)
+                else:
+                    start_background_download(name)
             elif not range_header and resp.status == 200:
-                target = target_path(name)
+                target = wd_target_path(wd_id) if wd_id is not None else target_path(name)
                 total = int(resp.getheader("Content-Length") or 0)
                 meta = _begin_download(target, name)
             if meta is None:
@@ -1907,7 +2054,7 @@ def find_newest_log():
 
 
 def extract_queue_items(lines):
-    """从日志行中取最后一条队列 JSON"""
+    """从日志行中取最后一条队列 JSON（PyPyDance 或 WannaDance，后出现的生效）"""
     items = None
     for line in lines:
         content = line.split("  -  ", 1)[-1].strip()
@@ -1917,7 +2064,26 @@ def extract_queue_items(lines):
                 items = json.loads(m.group(1))
             except Exception:
                 pass
+            continue
+        m = WD_QUEUE_RE.search(content)
+        if m:
+            try:
+                raw = json.loads(m.group(1))
+                items = [_normalize_wd_item(x) for x in raw if isinstance(x, dict)]
+            except Exception:
+                pass
     return items
+
+
+def _normalize_wd_item(x):
+    """WannaDance 队列项 -> 内部统一结构（wd=True 标记，songNum 即 WannaDance 歌曲编号）"""
+    players = x.get("playerNames") or []
+    return {
+        "songNum": x.get("songId"),
+        "videoName": x.get("title") or "?",
+        "playerName": ", ".join(str(p) for p in players),
+        "wd": True,
+    }
 
 
 def describe_queue(items):
@@ -1932,12 +2098,19 @@ def describe_queue(items):
             continue
         sn = it.get("songNum", 0)
         valid_id = isinstance(sn, int) and not isinstance(sn, bool) and sn > 0
-        kind, payload = song_route(sn) if valid_id else (None, None)
-        filename = payload if kind == "cdn" else (f"yt_{sn}.mp4" if kind == "yt" else None)
-        source = {"cdn": "cdn", "yt": "youtube"}.get(kind, "unknown" if valid_id else "external")
-        local = local_path_for(filename) if filename else None
-        if local is None and valid_id:
-            local = yt_local_path(sn)
+        if it.get("wd"):
+            # WannaDance：文件名即编号，无需映射表
+            kind, payload = ("cdn", wd_cache_name(sn)) if valid_id else (None, None)
+            filename = payload
+            source = "wannadance" if valid_id else "external"
+            local = wd_local_path(sn) if valid_id else None
+        else:
+            kind, payload = song_route(sn) if valid_id else (None, None)
+            filename = payload if kind == "cdn" else (f"yt_{sn}.mp4" if kind == "yt" else None)
+            source = {"cdn": "cdn", "yt": "youtube"}.get(kind, "unknown" if valid_id else "external")
+            local = local_path_for(filename) if filename else None
+            if local is None and valid_id:
+                local = yt_local_path(sn)
         matches = lambda task: (valid_id and task.get("song_id") == sn) or (filename and task.get("filename") == filename)
         task = next((task for task in tasks if matches(task)), None)
         outcome = next((outcome for outcome in reversed(outcomes) if matches(outcome)), None)
@@ -1988,7 +2161,14 @@ def submit_preload(items):
         if not isinstance(it, dict) or _stop_event.is_set():
             continue
         sn = it.get("songNum", 0)
-        if not (isinstance(sn, int) and not isinstance(sn, bool) and sn > 0) or in_library(sn) or yt_local_path(sn):
+        if not (isinstance(sn, int) and not isinstance(sn, bool) and sn > 0):
+            continue
+        if it.get("wd"):
+            # WannaDance：文件名即编号，直接走 api.udon.dance 302 下载
+            if not wd_local_path(sn):
+                start_wd_download(sn)
+            continue
+        if in_library(sn) or yt_local_path(sn):
             continue
         kind, payload = song_route(sn)
         if kind is None:
