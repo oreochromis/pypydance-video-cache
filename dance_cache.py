@@ -75,9 +75,9 @@ DEFAULT_CONFIG = {
     "max_parallel": 2,
     "preferred_cdn_ip": "",
     "enable_youtube_cache": True,
-    "youtube_permanent": False,
+    "youtube_permanent": True,
     "cdn_permanent": False,
-    "wd_permanent": False,
+    "wd_permanent": True,
     "cooldown_file": "",
 }
 
@@ -269,8 +269,7 @@ def _validated_config(config, *, allow_shared_storage=False):
             raise ValueError("优选 CDN IP 必须是有效的公网 IPv4 地址") from e
         if parsed.version != 4 or not parsed.is_global:
             raise ValueError("优选 CDN IP 必须是有效的公网 IPv4 地址")
-    if (cfg["youtube_permanent"] or cfg["cdn_permanent"] or cfg["wd_permanent"]) and not cfg["library_dir"]:
-        raise ValueError("启用永久保存前，请先设置曲库目录")
+    # 永久保存未设置曲库目录时不报错，自动暂缓生效（填写目录后即自动启用）
     return cfg
 
 
@@ -849,10 +848,11 @@ def _parse_retry_after(value, default):
 
 
 def ordered_ips(host):
-    """cdn.pypy.dance 优先使用用户设置的优选 IP，失效时自动回落到默认解析结果"""
+    """cdn.pypy.dance / play.udon.dance 优先使用用户设置的优选 IP（同为 Cloudflare，一个 IP 两家通用），
+    失效时自动回落到默认解析结果"""
     ips = list(_origin_ips.get(host, []))
     pref = (_config.get("preferred_cdn_ip") or "").strip()
-    if pref and _is_public_ip(pref) and host == "cdn.pypy.dance":
+    if pref and _is_public_ip(pref) and host in ("cdn.pypy.dance", UDON_PLAY_HOST):
         ips = [pref] + [ip for ip in ips if ip != pref]
     return ips
 
@@ -2424,6 +2424,9 @@ def start_services():
         try:
             log("正在解析真实服务器 IP...")
             resolve_real_ips()
+            if (any(_config.get(k) for k in ("youtube_permanent", "cdn_permanent", "wd_permanent"))
+                    and not (_config.get("library_dir") or "").strip()):
+                warnings.append("永久保存已开启但未设置曲库目录，暂缓生效；在存储页填写曲库目录后自动启用")
             if _stop_event.is_set():
                 raise _StartCancelled()
             if not _origin_ips.get("cdn.pypy.dance"):

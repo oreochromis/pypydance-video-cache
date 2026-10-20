@@ -346,7 +346,11 @@ class MainWindow(QMainWindow, Pages):
                 text += f"　|　WannaDance：{wd_count} 个 · {bytes_text(wd_mb * 1024**2)}"
             self.library_summary.setText(text)
         else:
-            self.library_summary.setText("尚未设置曲库目录")
+            cfg = self.controller.config()
+            if cfg.get("cdn_permanent") or cfg.get("wd_permanent") or cfg.get("youtube_permanent"):
+                self.library_summary.setText("尚未设置曲库目录（永久保存暂缓生效，填写目录后自动启用）")
+            else:
+                self.library_summary.setText("尚未设置曲库目录")
     def resize_tables(self):
         for widget, limit in ((self.queue_table, 4), (self.download_table, 3), (self.scan_table, 4), (self.favorites_table, 6)):
             rows = min(limit, widget.rowCount())

@@ -211,8 +211,6 @@ class CoreController(QObject):
                     import ipaddress
                     if not ipaddress.IPv4Address(patch["preferred_cdn_ip"]).is_global:
                         raise ValueError("优选 CDN IP 必须是有效的公网 IPv4 地址。")
-                if (patch.get("youtube_permanent") or patch.get("cdn_permanent")) and not patch.get("library_dir", self._demo_config["library_dir"]).strip():
-                    raise ValueError("开启永久保存前，请先选择曲库目录。")
                 changed = [k for k, v in patch.items() if self._demo_config.get(k) != v]
                 self._demo_config.update(patch)
                 self.result.emit(operation, {"restart_required": False, "changed": changed})
