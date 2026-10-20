@@ -339,7 +339,14 @@ class MainWindow(QMainWindow, Pages):
         self.cache_usage.setValue(min(1000, round(used / limit * 1000)) if limit else 0)
         self.cache_usage.setAccessibleName(f"已用 {used:.0f} MB，上限 {limit:.0f} MB")
         lib_count, lib_mb = data.get("lib_count", 0), data.get("lib_mb", 0)
-        self.library_summary.setText(f"{lib_count} 个视频  ·  {bytes_text(lib_mb * 1024**2)}" if self.controller.config().get("library_dir") else "尚未设置曲库目录")
+        wd_count, wd_mb = data.get("wd_count", 0), data.get("wd_mb", 0)
+        if self.controller.config().get("library_dir"):
+            text = f"PyPyDance：{lib_count} 个视频 · {bytes_text(lib_mb * 1024**2)}"
+            if wd_count:
+                text += f"　|　WannaDance：{wd_count} 个 · {bytes_text(wd_mb * 1024**2)}"
+            self.library_summary.setText(text)
+        else:
+            self.library_summary.setText("尚未设置曲库目录")
     def resize_tables(self):
         for widget, limit in ((self.queue_table, 4), (self.download_table, 3), (self.scan_table, 4), (self.favorites_table, 6)):
             rows = min(limit, widget.rowCount())
@@ -355,6 +362,7 @@ class MainWindow(QMainWindow, Pages):
                 self.cache_limit.setValue(config["max_cache_mb"])
                 self.library_path.setText(config["library_dir"])
                 self.cdn_permanent.setChecked(config["cdn_permanent"])
+                self.wd_permanent.setChecked(config.get("wd_permanent", False))
                 self.youtube_permanent.setChecked(config["youtube_permanent"])
             if section in (None, "settings"):
                 self.preload_count.setMaximum(max(10, config["preload_count"]))
@@ -380,7 +388,8 @@ class MainWindow(QMainWindow, Pages):
     def apply_settings(self, section):
         if section == "storage":
             patch = {"max_cache_mb": self.cache_limit.value(), "library_dir": self.library_path.text().strip(),
-                     "cdn_permanent": self.cdn_permanent.isChecked(), "youtube_permanent": self.youtube_permanent.isChecked()}
+                     "cdn_permanent": self.cdn_permanent.isChecked(), "wd_permanent": self.wd_permanent.isChecked(),
+                     "youtube_permanent": self.youtube_permanent.isChecked()}
         else:
             patch = {"preload_count": self.preload_count.value(), "enable_youtube_cache": self.youtube_enabled.isChecked(),
                      "cooldown_file": self.cooldown_path.text().strip(), "preferred_cdn_ip": self.preferred_ip.text().strip()}
@@ -666,7 +675,7 @@ class MainWindow(QMainWindow, Pages):
             set_status(self.song_state, name, state)
         else:
             self.song_title.setText("等待房间队列")
-            self.song_meta.setText("进入 PyPyDance 房间后，这里会显示最近检测到的队列首曲。")
+            self.song_meta.setText("进入 PyPyDance / WannaDance 房间后，这里会显示最近检测到的队列首曲。")
             set_status(self.song_state, "等待检测")
         upcoming = self._queue[1:]
         self.queue_table.setRowCount(len(upcoming))

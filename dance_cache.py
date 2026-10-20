@@ -77,6 +77,7 @@ DEFAULT_CONFIG = {
     "enable_youtube_cache": True,
     "youtube_permanent": False,
     "cdn_permanent": False,
+    "wd_permanent": False,
     "cooldown_file": "",
 }
 
@@ -246,7 +247,7 @@ def _validated_config(config, *, allow_shared_storage=False):
         value = cfg.get(name)
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
             raise ValueError(f"{name} 必须是大于等于 {minimum} 的整数")
-    for name in ("enable_youtube_cache", "youtube_permanent", "cdn_permanent"):
+    for name in ("enable_youtube_cache", "youtube_permanent", "cdn_permanent", "wd_permanent"):
         if not isinstance(cfg.get(name), bool):
             raise ValueError(f"{name} 必须是布尔值")
     for name in ("cache_dir", "library_dir", "preferred_cdn_ip", "cooldown_file"):
@@ -268,7 +269,7 @@ def _validated_config(config, *, allow_shared_storage=False):
             raise ValueError("优选 CDN IP 必须是有效的公网 IPv4 地址") from e
         if parsed.version != 4 or not parsed.is_global:
             raise ValueError("优选 CDN IP 必须是有效的公网 IPv4 地址")
-    if (cfg["youtube_permanent"] or cfg["cdn_permanent"]) and not cfg["library_dir"]:
+    if (cfg["youtube_permanent"] or cfg["cdn_permanent"] or cfg["wd_permanent"]) and not cfg["library_dir"]:
         raise ValueError("启用永久保存前，请先设置曲库目录")
     return cfg
 
@@ -515,7 +516,8 @@ def wd_cache_name(song_id):
 
 
 def wd_library_path(song_id):
-    return os.path.join(_config.get("library_dir") or "", wd_cache_name(song_id))
+    """WannaDance 永久保存到曲库目录下的 wannadance 子目录，与 PyPyDance 物理隔离"""
+    return os.path.join(_config.get("library_dir") or "", "wannadance", wd_cache_name(song_id))
 
 
 def wd_local_path(song_id):
@@ -531,9 +533,11 @@ def wd_local_path(song_id):
 
 
 def wd_target_path(song_id):
-    """WannaDance 新下载保存位置：曲库模式且"其他视频永久保存"开启时进曲库，否则进普通缓存"""
-    if library_enabled() and _config.get("cdn_permanent", False):
-        return wd_library_path(song_id)
+    """WannaDance 新下载保存位置：曲库模式且"WannaDance永久保存"开启时进曲库子目录，否则进普通缓存"""
+    if library_enabled() and _config.get("wd_permanent", False):
+        target = wd_library_path(song_id)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        return target
     return cache_path(wd_cache_name(song_id))
 
 
@@ -572,7 +576,7 @@ def api_request(path):
 
 
 def get_cache_stats():
-    count = total = lib_count = lib_total = 0
+    count = total = lib_count = lib_total = wd_count = wd_total = 0
     try:
         for name in os.listdir(_config["cache_dir"]):
             p = os.path.join(_config["cache_dir"], name)
@@ -590,13 +594,23 @@ def get_cache_stats():
                     lib_total += os.path.getsize(p)
         except Exception:
             pass
-    return count, total, lib_count, lib_total
+        try:
+            wd_dir = os.path.join(_config["library_dir"], "wannadance")
+            for name in os.listdir(wd_dir):
+                p = os.path.join(wd_dir, name)
+                if WD_CACHE_RE.match(name) and os.path.isfile(p):
+                    wd_count += 1
+                    wd_total += os.path.getsize(p)
+        except Exception:
+            pass
+    return count, total, lib_count, lib_total, wd_count, wd_total
 
 
 def emit_stats():
-    count, total, lib_count, lib_total = get_cache_stats()
+    count, total, lib_count, lib_total, wd_count, wd_total = get_cache_stats()
     emit("stats", count=count, total_mb=total / 1048576, limit_mb=int(_config["max_cache_mb"]),
-         lib_count=lib_count, lib_mb=lib_total / 1048576, lib_enabled=library_enabled())
+         lib_count=lib_count, lib_mb=lib_total / 1048576, lib_enabled=library_enabled(),
+         wd_count=wd_count, wd_mb=wd_total / 1048576)
 
 
 def clear_cache():
