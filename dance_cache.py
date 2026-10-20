@@ -338,7 +338,7 @@ def update_config(patch):
         changed = [name for name in patch if previous.get(name) != cfg[name]]
         if not changed:
             return {"restart_required": False, "changed": []}
-        paths_changed = bool({"cache_dir", "library_dir"} & set(changed))
+        paths_changed = bool({"cache_dir", "library_dir", "wd_library_dir"} & set(changed))
         busy = bool(_downloads_in_progress) or rebuilding() or verifying()
         if paths_changed and (_running or busy):
             raise ValueError("请先停止服务并等待下载或曲库任务结束，再修改保存目录")
@@ -349,15 +349,39 @@ def update_config(patch):
         if cfg["cooldown_file"] and "cooldown_file" in changed:
             if not os.path.isfile(cfg["cooldown_file"]) or os.path.getsize(cfg["cooldown_file"]) == 0:
                 raise ValueError("放松视频不存在或为空文件")
-        for name in ("cache_dir", "library_dir"):
+        for name in ("cache_dir", "library_dir", "wd_library_dir"):
             if cfg[name]:
                 os.makedirs(cfg[name], exist_ok=True)
         _write_config(cfg)
         _config = cfg
+    if _running:
+        # 运行中改配置后立即重算暂缓类警告，状态灯提示保持准确
+        _refresh_deferral_warnings()
     emit("config", changed=changed, restart_required=False)
     emit_stats()
     refresh_queue_state()
     return {"restart_required": False, "changed": changed}
+
+
+_DEFERRAL_PREFIXES = ("PyPyDance 永久保存已开启", "WannaDance 永久保存已开启")
+
+
+def _deferral_warnings():
+    """按当前配置实时计算"永久保存暂缓"类警告"""
+    out = []
+    if (any(_config.get(k) for k in ("youtube_permanent", "cdn_permanent"))
+            and not (_config.get("library_dir") or "").strip()):
+        out.append("PyPyDance 永久保存已开启但未设置曲库目录，暂缓生效；在存储页填写曲库目录后自动启用")
+    if _config.get("wd_permanent") and not (_config.get("wd_library_dir") or "").strip():
+        out.append("WannaDance 永久保存已开启但未设置 WannaDance 曲库目录，暂缓生效；在存储页填写后自动启用")
+    return out
+
+
+def _refresh_deferral_warnings():
+    with _runtime_lock:
+        kept = [w for w in (_runtime_state.get("warnings") or [])
+                if not w.startswith(_DEFERRAL_PREFIXES)]
+    _set_runtime_state(warnings=kept + _deferral_warnings())
 
 
 def get_runtime_state():
@@ -2452,11 +2476,7 @@ def start_services():
         try:
             log("正在解析真实服务器 IP...")
             resolve_real_ips()
-            if (any(_config.get(k) for k in ("youtube_permanent", "cdn_permanent"))
-                    and not (_config.get("library_dir") or "").strip()):
-                warnings.append("PyPyDance 永久保存已开启但未设置曲库目录，暂缓生效；在存储页填写曲库目录后自动启用")
-            if _config.get("wd_permanent") and not (_config.get("wd_library_dir") or "").strip():
-                warnings.append("WannaDance 永久保存已开启但未设置 WannaDance 曲库目录，暂缓生效；在存储页填写后自动启用")
+            warnings.extend(_deferral_warnings())
             if _stop_event.is_set():
                 raise _StartCancelled()
             if not _origin_ips.get("cdn.pypy.dance"):

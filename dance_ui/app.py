@@ -902,6 +902,12 @@ def main(argv=None):
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setOrganizationName("Xiaoyu12-CPU")
     app.setApplicationName("PyPyDanceCache")
+    # 缩短浮窗弹出延迟（默认约 700ms，偏迟钝）
+    try:
+        from PySide6.QtWidgets import QStyleHints
+        app.styleHints().setStyleHint(QStyleHints.StyleHint.SH_ToolTip_WakeUpDelay, 200)
+    except Exception:
+        pass
     app.setApplicationVersion(__version__)
     app.setStyle("Fusion")
     available = set(QFontDatabase.families())
