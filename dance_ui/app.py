@@ -286,6 +286,8 @@ class MainWindow(QMainWindow, Pages):
         if self.controller.demo:
             title = "演示 · " + title
         self.service_status.setText("●  " + title)
+        warnings = self._runtime.get("warnings") or []
+        self.service_status.setToolTip("当前问题：\n• " + "\n• ".join(warnings) if warnings else "")
         color = "#A97823" if phase in ("starting", "stopping") or self._runtime_warning else "#20824E" if running else "#8290A6"
         if running and self.store.active.get("base") == "dark" and not self._runtime_warning:
             color = "#7CDBA5"
