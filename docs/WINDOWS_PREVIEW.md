@@ -2,10 +2,10 @@
 
 当前正式版为 `3.0.1`。用户已反馈在 Windows + VRChat 实际使用正常；以下步骤供首次使用、升级及环境差异检查。无需安装 Python。
 
-1. 下载 `PyPyDanceCache-windows-x64.zip`，将整个 `PyPyDanceCache` 文件夹解压到当前账户可写的独立目录。
-2. 保留 `PyPyDanceCache.exe` 旁的 `_internal` 等全部文件，不能只复制 exe。升级前备份旧 `config.json`、`mapping.json` 和视频目录，在独立目录解压新包；确认旧相对路径后再迁入配置，不覆盖或合并 `_internal`。
+1. 下载 `VRChatDanceAssistant-windows-x64.zip`，将整个 `VRChat跳舞房助手` 文件夹解压到当前账户可写的独立目录。
+2. 保留 `VRChat跳舞房助手.exe` 旁的 `_internal` 等全部文件，不能只复制 exe。升级前备份旧 `config.json`、`mapping.json` 和视频目录，在独立目录解压新包；确认旧相对路径后再迁入配置，不覆盖或合并 `_internal`。
 3. 先双击 `打开演示.bat`，检查四个页面、主题和背景。此入口不启动真实缓存服务。关闭窗口后，再进行真实验证。
-4. 双击 `PyPyDanceCache.exe`，按 UAC 提示启动；此入口会自动启动真实缓存服务。程序未签名，发布者显示为未知。
+4. 双击 `VRChat跳舞房助手.exe`，按 UAC 提示启动；此入口会自动启动真实缓存服务。程序未签名，发布者显示为未知。
 5. 在“存储／设置”填写实际目录和所需选项并应用。修改保存目录、YouTube 缓存开关前先停止服务，应用后重新启动；等待活动任务结束再改目录。
 6. 打开 VRChat 的 PyPyDance 房间，检查队列识别、CDN/YouTube 视频请求、缓存命中与后台保存。不要与其他接管相同域名的缓存工具同时运行。
 7. 正常关闭程序，检查服务退出和 hosts 恢复。有恢复失败提示时保留窗口，按提示重试并保留日志。

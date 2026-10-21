@@ -88,7 +88,7 @@ def inspect_demo(window) -> dict:
         # into the user's managed backgrounds. Only the widget changes, and the
         # normal appearance is restored even if decoding/rendering fails.
         try:
-            with tempfile.TemporaryDirectory(prefix="pypydance-smoke-image-") as directory:
+            with tempfile.TemporaryDirectory(prefix="vrchat-dance-smoke-image-") as directory:
                 image = Path(directory) / "render-check.png"
                 Image.new("RGB", (8, 6), (40, 90, 180)).save(image)
                 theme = dict(window.store.active, image_opacity=1.0, image_blur=0.0)

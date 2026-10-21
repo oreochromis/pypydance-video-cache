@@ -10,8 +10,8 @@
 
 ## 下载与使用
 
-1. 下载 `PyPyDanceCache-windows-x64.zip`，将整个 `PyPyDanceCache` 文件夹解压到当前账户可写的目录。
-2. 双击 `PyPyDanceCache.exe`，确认 Windows 管理员授权。程序启动后会自动开启缓存服务，无需安装 Python。
+1. 下载 `VRChatDanceAssistant-windows-x64.zip`，将整个 `VRChat跳舞房助手` 文件夹解压到当前账户可写的目录。
+2. 双击 `VRChat跳舞房助手.exe`，确认 Windows 管理员授权。程序启动后会自动开启缓存服务，无需安装 Python。
 3. 服务显示运行中后，进入 VRChat 的 PyPyDance 房间正常点歌。
 4. 根据需要，在“存储”页设置永久曲库，在“设置”页调整预加载数量和 CDN，在“外观”页调整主题。
 5. 使用结束后正常关闭窗口，程序会停止服务并尝试还原本程序添加的 hosts 设置。若提示恢复失败，请保留窗口和日志，按提示重试。
@@ -145,7 +145,7 @@ py -3.12 -m venv .venv
 .\build_windows.ps1 -Python .\.venv\Scripts\python.exe
 ```
 
-构建产物位于 `dist\PyPyDanceCache\`，分发时保留整个目录。也可使用 `启动.bat`，它会优先打开已构建的 exe，否则使用 Python 运行源码。
+构建产物位于 `dist\VRChat跳舞房助手\`，分发时保留整个目录。也可使用 `启动.bat`，它会优先打开已构建的 exe，否则使用 Python 运行源码。
 
 ## 验证与问题反馈
 

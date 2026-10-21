@@ -8,7 +8,7 @@ from .exe_icon import ico_frames
 
 
 COOLDOWN_RELATIVE_PATH = "assets/default_cooldown.mp4"
-COOLDOWN_ARCHIVE_PATH = "PyPyDanceCache/_internal/" + COOLDOWN_RELATIVE_PATH
+COOLDOWN_ARCHIVE_PATH = "VRChat跳舞房助手/_internal/" + COOLDOWN_RELATIVE_PATH
 COOLDOWN_MAX_BYTES = 5 * 1024 * 1024
 # The approved user clip is bundled byte for byte, without recompression.
 COOLDOWN_SIZE_BYTES = 5_073_920

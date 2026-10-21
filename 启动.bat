@@ -2,9 +2,15 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
-if exist "PyPyDanceCache.exe" goto launch_local
-if exist "dist\PyPyDanceCache\PyPyDanceCache.exe" goto launch_bundle
+if exist "dance_cache_gui.py" goto launch_source
+if exist "VRChat跳舞房助手.exe" goto launch_local
+if exist "dist\VRChat跳舞房助手\VRChat跳舞房助手.exe" goto launch_bundle
 
+:launch_source
+if exist "C:\Users\92153\AppData\Local\Python\bin\python.exe" (
+  start "" "C:\Users\92153\AppData\Local\Python\bin\python.exe" "dance_cache_gui.py" %*
+  exit /b
+)
 if exist ".venv\Scripts\python.exe" (
   ".venv\Scripts\python.exe" "dance_cache_gui.py" %*
 ) else (
@@ -19,9 +25,9 @@ if not "%APP_EXIT_CODE%"=="0" (
 exit /b %APP_EXIT_CODE%
 
 :launch_local
-start "" "PyPyDanceCache.exe" %*
+start "" "VRChat跳舞房助手.exe" %*
 exit /b
 
 :launch_bundle
-start "" "dist\PyPyDanceCache\PyPyDanceCache.exe" %*
+start "" "dist\VRChat跳舞房助手\VRChat跳舞房助手.exe" %*
 exit /b

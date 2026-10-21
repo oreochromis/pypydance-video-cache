@@ -65,7 +65,7 @@ for name in ("PySide6-Essentials", "Pillow", "PyInstaller", "openvr"):
     Invoke-ProjectPython -Arguments @(
         "-m", "PyInstaller",
         "--clean", "--noconfirm", "--onedir", "--windowed",
-        "--name", "PyPyDanceCache",
+        "--name", "VRChat跳舞房助手",
         "--uac-admin",
         "--icon", (Join-Path $projectRoot "assets\app-icon.ico"),
         "--distpath", (Join-Path $projectRoot "dist"),
@@ -78,7 +78,7 @@ for name in ("PySide6-Essentials", "Pillow", "PyInstaller", "openvr"):
         "dance_cache_gui.py"
     )
 
-    $bundleRoot = Join-Path $projectRoot "dist\PyPyDanceCache"
+    $bundleRoot = Join-Path $projectRoot "dist\VRChat跳舞房助手"
     $bundleDocs = Join-Path $bundleRoot "docs"
     New-Item -ItemType Directory -Force -Path $bundleDocs | Out-Null
     foreach ($fileName in @("README.md", "LICENSE", "启动.bat", "打开演示.bat")) {
@@ -119,7 +119,7 @@ for package in ("PySide6-Essentials", "shiboken6", "Pillow", "PyInstaller", "ope
 
     Write-Host ""
     Write-Host "Bundle created: $bundleRoot"
-    Write-Host "Distribute the complete PyPyDanceCache folder, including _internal."
+    Write-Host "Distribute the complete VRChat跳舞房助手 folder, including _internal."
     Write-Host "The executable requests UAC elevation, including with --demo."
     Write-Host "Windows + VRChat end-to-end verification remains a separate release step."
 }

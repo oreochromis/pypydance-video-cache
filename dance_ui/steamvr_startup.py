@@ -15,8 +15,8 @@ import sys
 import tempfile
 import threading
 
-APP_KEY = "xiaoyu12cpu.pypydancecache"
-MUTEX_NAME = r"Local\PyPyDanceCache.UI"
+APP_KEY = "sharkspeare.vrchatdanceassistant"
+MUTEX_NAME = r"Local\VRChatDanceAssistant.UI"
 _runtime_lock = threading.Lock()
 
 
@@ -43,7 +43,7 @@ def launch_manifest(executable, arguments, working_directory, powershell):
         + " -Verb RunAs"
     )
     encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
-    return {"source": "PyPyDance Cache", "applications": [{
+    return {"source": "VRChat Dance Assistant", "applications": [{
         "app_key": APP_KEY,
         "launch_type": "binary",
         # OpenVR requires this property for SetApplicationAutoLaunch. This
@@ -95,7 +95,7 @@ def applications():
 
 class SteamVRStartup:
     def __init__(self, state_dir):
-        self.manifest_path = Path(state_dir) / "steamvr" / "pypydance.vrmanifest"
+        self.manifest_path = Path(state_dir) / "steamvr" / "vrchatdance.vrmanifest"
 
     @staticmethod
     def _result(enabled):

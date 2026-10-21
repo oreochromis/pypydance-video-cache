@@ -638,7 +638,7 @@ class MainWindow(QMainWindow, Pages):
         self.notify("运行日志已复制。")
 
     def export_logs(self):
-        path, _ = QFileDialog.getSaveFileName(self, "导出运行日志", "pypydance-log.txt", "文本文件 (*.txt)")
+        path, _ = QFileDialog.getSaveFileName(self, "导出运行日志", "vrchat-dance-log.txt", "文本文件 (*.txt)")
         if not path:
             return
         try:
@@ -899,7 +899,7 @@ def main(argv=None):
             return 0
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setOrganizationName("Xiaoyu12-CPU")
-    app.setApplicationName("PyPyDanceCache")
+    app.setApplicationName("VRChatDanceAssistant")
     # 缩短浮窗弹出延迟（默认约 700ms，偏迟钝）
     try:
         from PySide6.QtWidgets import QStyleHints
@@ -911,7 +911,7 @@ def main(argv=None):
     available = set(QFontDatabase.families())
     family = next((name for name in ("Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", "PingFang SC", "Segoe UI") if name in available), app.font().family())
     app.setFont(QFont(family, 10))
-    temporary = tempfile.TemporaryDirectory(prefix="pypydance-preview-") if args.demo and args.state_dir is None else None
+    temporary = tempfile.TemporaryDirectory(prefix="vrchat-dance-preview-") if args.demo and args.state_dir is None else None
     state_dir = args.state_dir or (Path(temporary.name) if temporary else Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)) / "appearance")
     controller = None
     try:

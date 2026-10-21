@@ -21,7 +21,7 @@ class WindowsApplicationIdentityTests(unittest.TestCase):
         with patch.object(taskbar.sys, "platform", "win32"), patch.object(taskbar, "_windows_library", return_value=shell):
             taskbar.set_windows_application_identity()
         setter = shell.SetCurrentProcessExplicitAppUserModelID
-        setter.assert_called_once_with("Xiaoyu12CPU.PyPyDanceCache")
+        setter.assert_called_once_with("Sharkspeare.VRChatDanceAssistant")
         self.assertEqual(setter.argtypes, [ctypes.c_wchar_p])
         self.assertIs(setter.restype, ctypes.c_int32)
 

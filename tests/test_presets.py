@@ -206,7 +206,7 @@ class ThemeUpgradeTests(unittest.TestCase):
         self.assertEqual(list(store.root_dir.glob(".appearance-*.tmp")), [])
 
     def test_frozen_style_module_needs_no_packaged_media_and_writes_only_user_data(self):
-        internal = self.root / "PyPyDanceCache" / "_internal"
+        internal = self.root / "VRChat跳舞房助手" / "_internal"
         package = internal / "dance_ui"
         package.mkdir(parents=True)
         module_path = package / "theme.py"

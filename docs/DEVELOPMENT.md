@@ -54,7 +54,7 @@ py -3.12 -m venv .venv
 QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation) / appearance
 ```
 
-应用标识：组织 `Xiaoyu12-CPU`、应用 `PyPyDanceCache`。以 Qt 在当前系统返回的实际路径为准，不硬编码用户名或盘符。
+应用标识：应用 `VRChatDanceAssistant`（任务栏 AppUserModelID `Sharkspeare.VRChatDanceAssistant`）。以 Qt 在当前系统返回的实际路径为准，不硬编码用户名或盘符。
 
 主题存储包含 `appearance.json` 与 `backgrounds/`。个人导入背景复制到此目录，原图不修改；随附背景从程序资源加载，所有副本均缺失时回退主题底色。可编辑主题不能写入 PyInstaller 的 `_internal` 或解包资源目录。
 
@@ -139,14 +139,14 @@ Cool Down 表达已配置、待命、已触发等阶段，只替换本机画面�
 不指定 Python 时，脚本优先使用项目内 `.venv\Scripts\python.exe`，否则使用 PATH 中的 `python`。它验证平台和 Python 版本，使用如下打包形式：
 
 ```powershell
-python -m PyInstaller --clean --noconfirm --onedir --windowed --name PyPyDanceCache --uac-admin dance_cache_gui.py
+python -m PyInstaller --clean --noconfirm --onedir --windowed --name VRChat跳舞房助手 --uac-admin dance_cache_gui.py
 ```
 
-实际脚本将生成物限定在项目 `build` 与 `dist`，并复制 README、MIT 许可、开发说明和可发现的第三方声明。仓库原有的 `VRChat PyPyDance助手.spec` 也更新为同名 `PyPyDanceCache` 的 onedir 产物；推荐使用脚本统一收集随包文档。
+实际脚本将生成物限定在项目 `build` 与 `dist`，并复制 README、MIT 许可、开发说明和可发现的第三方声明。仓库原有的 `VRChat PyPyDance助手.spec` 已更替为 `VRChat跳舞房助手` 的 onedir 产物；推荐使用脚本统一收集随包文档。
 
 ### 分发约束
 
-- 启动文件：`dist\PyPyDanceCache\PyPyDanceCache.exe`。
+- 启动文件：`dist\VRChat跳舞房助手\VRChat跳舞房助手.exe`。
 - 分发完整目录，包括 `_internal`，不能单独复制 exe。
 - `--uac-admin` 会让打包版每次启动请求提权，包括 `--demo`。从源码运行演示无需因为缓存服务申请提权。
 - 不打包“小余12主题”、个人背景、配置或视频。发布验证会拒绝意外夹带的预置主题资源。
@@ -160,7 +160,7 @@ python -m PyInstaller --clean --noconfirm --onedir --windowed --name PyPyDanceCa
 `.github/workflows/windows-preview.yml` 在 `ui-redesign` 或 `main` 推送后使用原生 Windows x64 / Python 3.12 构建。完整隔离测试必须零失败、零错误、零跳过，随后运行打包后的 exe：
 
 ```powershell
-.\dist\PyPyDanceCache\PyPyDanceCache.exe --demo --state-dir TEMP_PATH --smoke-test-report REPORT_PATH
+.\dist\VRChat跳舞房助手\VRChat跳舞房助手.exe --demo --state-dir TEMP_PATH --smoke-test-report REPORT_PATH
 ```
 
 该自动检查参数仅与 `--demo` 一起使用，检查四页导航、SVG 资源、默认浅蓝主题及使用临时合成图片的 Pillow 到 Qt 背景渲染，写 JSON 后自动退出。报告必须确认 `win32`、Qt `windows` 平台和 `frozen=true`，才能由 `tools/package_windows.py` 生成完整目录 ZIP、SHA-256 及构建信息。实际报告也保存在包内 `docs/build-info.json`。
@@ -189,6 +189,6 @@ python -m PyInstaller --clean --noconfirm --onedir --windowed --name PyPyDanceCa
 
 ### Windows 任务栏身份（3.0.1）
 
-入口在创建 QApplication 或任何窗口之前设置稳定的 AppUserModelID `Xiaoyu12CPU.PyPyDanceCache`，避免系统沿用 Python 宿主的任务栏关联；不改变 Qt 配置组织和应用名称，不自动修改用户固定项。
+入口在创建 QApplication 或任何窗口之前设置稳定的 AppUserModelID `Sharkspeare.VRChatDanceAssistant`，避免系统沿用 Python 宿主的任务栏关联；不改变 Qt 配置组织和应用名称，不自动修改用户固定项。
 
 冻结检查读回进程身份，并通过 WM_GETICON 获取原生 BIG/SMALL HICON，分别在黑白底绘制，与同尺寸的 PY 图标逐像素比较。此检查不同于 Qt windowIcon 属性或 exe 内嵌资源校验，不表示已读取或刷新用户的 Explorer 缓存。已有旧固定项可由用户取消固定后重新固定新版 exe。

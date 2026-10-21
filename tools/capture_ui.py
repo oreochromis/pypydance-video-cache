@@ -44,7 +44,7 @@ def main():
     available = set(QFontDatabase.families())
     family = next((name for name in ("Microsoft YaHei UI", "Noto Sans SC", "PingFang SC", "Segoe UI") if name in available), app.font().family())
     app.setFont(QFont(family, 10))
-    with tempfile.TemporaryDirectory(prefix="pypydance-capture-") as state:
+    with tempfile.TemporaryDirectory(prefix="vrchat-dance-capture-") as state:
         store = ThemeStore(state)
         controller = CoreController(demo=True)
         window = MainWindow(controller, store)

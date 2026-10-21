@@ -25,7 +25,7 @@ from dance_ui.release_resources import (
 
 REPOSITORY = "Xiaoyu12-CPU/pypydance-video-cache"
 TAG = "v3.0.1"
-TITLE = "PyPyDance Cache 3.0.1（Windows 正式版）"
+TITLE = "VRChat 跳舞房助手 3.0.1（Windows 正式版）"
 PUBLISH_MARKER = "[publish-release]"
 REQUIRED_SMOKE_CHECKS = {
     "demo_mode", "builtin_light_theme", "pillow_generated_background",
@@ -65,7 +65,7 @@ def verify_taskbar_report(report: object) -> None:
 
 
 def verify_assets(assets: Path, expected_sha: str) -> tuple[dict, list[Path]]:
-    archive = assets / "PyPyDanceCache-windows-x64.zip"
+    archive = assets / "VRChatDanceAssistant-windows-x64.zip"
     checksum = assets / (archive.name + ".sha256")
     info_path = assets / "build-info.json"
     if digest(archive) != checksum.read_text(encoding="ascii").split()[0]:
@@ -106,23 +106,23 @@ def verify_assets(assets: Path, expected_sha: str) -> tuple[dict, list[Path]]:
         if any("presets" in tuple(part.casefold() for part in Path(name.replace("\\", "/")).parts)
                for name in members):
             raise ValueError("Stable release assets must not include bundled preset resources.")
-        for path in ("PyPyDanceCache.exe", "_internal/python312.dll", "docs/build-info.json", "打开演示.bat"):
-            if "PyPyDanceCache/" + path not in members:
+        for path in ("VRChat跳舞房助手.exe", "_internal/python312.dll", "docs/build-info.json", "打开演示.bat"):
+            if "VRChat跳舞房助手/" + path not in members:
                 raise ValueError("The release ZIP is incomplete: " + path)
         if COOLDOWN_ARCHIVE_PATH not in members:
             raise ValueError("The release ZIP is missing the bundled cooldown video.")
         if validate_cooldown_bytes(zipped.read(COOLDOWN_ARCHIVE_PATH)) != source_video:
             raise ValueError("The release ZIP cooldown video differs from the approved source video.")
-        paths = ["PyPyDanceCache/_internal/" + path for path in (APP_ICON_PNG_RELATIVE_PATH, APP_ICON_ICO_RELATIVE_PATH)]
+        paths = ["VRChat跳舞房助手/_internal/" + path for path in (APP_ICON_PNG_RELATIVE_PATH, APP_ICON_ICO_RELATIVE_PATH)]
         if not all(path in members for path in paths):
             raise ValueError("The release ZIP is missing application icon resources.")
         if validate_app_icon_bytes(*(zipped.read(path) for path in paths)) != source_icons:
             raise ValueError("The release ZIP application icons differ from the approved source icons.")
         if describe_embedded_icon(
-            zipped.read("PyPyDanceCache/PyPyDanceCache.exe"), zipped.read(paths[1]),
+            zipped.read("VRChat跳舞房助手/VRChat跳舞房助手.exe"), zipped.read(paths[1]),
         ) != info["windows_executable_icon"]:
             raise ValueError("The release executable icon differs from the tested Windows executable.")
-        if json.loads(zipped.read("PyPyDanceCache/docs/build-info.json")) != info:
+        if json.loads(zipped.read("VRChat跳舞房助手/docs/build-info.json")) != info:
             raise ValueError("The bundled and attached build reports differ.")
     return info, [archive, checksum, info_path]
 
@@ -154,7 +154,7 @@ def tag_commit() -> str | None:
 def notes(info: dict, checksum: str) -> str:
     smoke, tests = info["frozen_demo_smoke"], info["isolated_tests"]
     run_url = f"https://github.com/{REPOSITORY}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-    return f"""PyPyDance Cache 3.0.1 Windows x64 正式版。
+    return f"""VRChat 跳舞房助手 3.0.1 Windows x64 正式版。
 
 ## 本次更新
 
@@ -163,11 +163,11 @@ def notes(info: dict, checksum: str) -> str:
 - 保留七种尺寸的 exe 图标和透明 PNG；原有功能及默认 CoolDown 视频保持现有行为。
 - Windows 包继续不附带“小余12主题”及其背景。
 
-如果此前已把 Python 图标固定到任务栏，请先取消固定旧项，再从本版 `PyPyDanceCache.exe` 重新固定。程序不会自动修改你的固定项或清理系统图标缓存。
+如果此前已把 Python 图标固定到任务栏，请先取消固定旧项，再从本版 `VRChat跳舞房助手.exe` 重新固定。程序不会自动修改你的固定项或清理系统图标缓存。
 
 ## 下载与启动
 
-下载下方 **PyPyDanceCache-windows-x64.zip**，完整解压后运行 `PyPyDanceCache/PyPyDanceCache.exe`，无需安装 Python。必须保留 `_internal` 等全部文件，其中包含默认视频；不能只复制 exe。
+下载下方 **VRChatDanceAssistant-windows-x64.zip**，完整解压后运行 `VRChat跳舞房助手/VRChat跳舞房助手.exe`，无需安装 Python。必须保留 `_internal` 等全部文件，其中包含默认视频；不能只复制 exe。
 
 首次使用可先双击 `打开演示.bat` 检查界面；演示不启动真实缓存服务。正常入口按 UAC 提示启动并自动开启缓存服务。程序未签名，UAC 发布者显示为未知。完整步骤见包内 `docs/WINDOWS_PREVIEW.md`。
 

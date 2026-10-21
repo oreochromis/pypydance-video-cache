@@ -5,7 +5,7 @@ import ctypes
 import sys
 
 
-APPLICATION_ID = "Xiaoyu12CPU.PyPyDanceCache"
+APPLICATION_ID = "Sharkspeare.VRChatDanceAssistant"
 
 
 def _windows_library(name):

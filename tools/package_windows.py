@@ -47,7 +47,7 @@ def verify_taskbar_report(report: object) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--bundle", type=Path, default=Path("dist/PyPyDanceCache"))
+    parser.add_argument("--bundle", type=Path, default=Path("dist/VRChat跳舞房助手"))
     parser.add_argument("--reports", type=Path, default=Path("build-reports"))
     parser.add_argument("--output", type=Path, default=Path("release"))
     args = parser.parse_args()
@@ -55,10 +55,10 @@ def main() -> int:
         raise SystemExit("Release assets must be prepared with native 64-bit Windows Python.")
 
     bundle = args.bundle.resolve()
-    if bundle.name != "PyPyDanceCache":
-        raise SystemExit("The bundle root must be named PyPyDanceCache.")
+    if bundle.name != "VRChat跳舞房助手":
+        raise SystemExit("The bundle root must be named VRChat跳舞房助手.")
     required = (
-        "PyPyDanceCache.exe",
+        "VRChat跳舞房助手.exe",
         "_internal/python312.dll",
         "README.md",
         "LICENSE",
@@ -85,7 +85,7 @@ def main() -> int:
     if describe_app_icons(bundle / "_internal") != icons_info:
         raise SystemExit("The bundled application icons differ from the approved source icons.")
     embedded_icon = describe_embedded_icon(
-        (bundle / "PyPyDanceCache.exe").read_bytes(),
+        (bundle / "VRChat跳舞房助手.exe").read_bytes(),
         (bundle / "_internal" / APP_ICON_ICO_RELATIVE_PATH).read_bytes(),
     )
 
@@ -123,9 +123,9 @@ def main() -> int:
         raise SystemExit("The checkout commit differs from the GitHub Actions commit.")
     dependencies = (args.reports / "dependencies.txt").read_text(encoding="utf-8-sig").splitlines()
     build_info = {
-        "application": "PyPyDanceCache",
+        "application": "VRChatDanceAssistant",
         "application_version": __version__,
-        "asset": "PyPyDanceCache-windows-x64.zip",
+        "asset": "VRChatDanceAssistant-windows-x64.zip",
         "git_sha": commit,
         "git_ref": os.environ.get("GITHUB_REF"),
         "repository": os.environ.get("GITHUB_REPOSITORY"),
@@ -161,7 +161,7 @@ def main() -> int:
             "Individual CDN/YouTube cache scenarios and existing library migration",
             "Windows display scaling configurations and stable-package manual regression",
         ],
-        "distribution": "Extract and keep the complete PyPyDanceCache folder, including _internal.",
+        "distribution": "Extract and keep the complete VRChat跳舞房助手 folder, including _internal.",
     }
     build_info_text = json.dumps(build_info, ensure_ascii=False, indent=2) + "\n"
     (bundle / "docs/build-info.json").write_text(build_info_text, encoding="utf-8")
@@ -190,7 +190,7 @@ def main() -> int:
         ) != icons_info:
             raise SystemExit("The archived application icons differ from the approved source icons.")
         if describe_embedded_icon(
-            zipped.read(bundle.name + "/PyPyDanceCache.exe"),
+            zipped.read(bundle.name + "/VRChat跳舞房助手.exe"),
             zipped.read(archive_prefix + APP_ICON_ICO_RELATIVE_PATH),
         ) != embedded_icon:
             raise SystemExit("The archived executable icon differs from the tested executable.")
