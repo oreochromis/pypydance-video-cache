@@ -244,6 +244,19 @@ class CoreTests(unittest.TestCase):
             self.dc.update_config({"enable_youtube_cache": False})
         self.dc._running = False
 
+    def test_preferred_cdn_ip_applies_to_redirected_subdomain(self):
+        self.dc._config["preferred_cdn_ip"] = "172.66.157.15"
+        self.dc._origin_ips["cdn.pypy.dance"] = ["104.20.20.68"]
+        self.dc._origin_ips["806bb815.cdn.pypy.dance"] = ["59.16.201.126"]
+        self.assertEqual(self.dc.ordered_ips("cdn.pypy.dance")[0], "172.66.157.15")
+        # 实际下载会被 301 到带哈希的子域名，优选 IP 必须同样生效
+        self.assertEqual(self.dc.ordered_ips("806bb815.cdn.pypy.dance")[0], "172.66.157.15")
+        # 未解析过的子域名也应返回优选 IP，而不是空列表导致无法下载
+        self.assertEqual(self.dc.ordered_ips("abcdef12.cdn.pypy.dance"), ["172.66.157.15"])
+        # 非 CDN 域名不受影响
+        self.dc._origin_ips["api.pypy.dance"] = ["1.2.3.4"]
+        self.assertEqual(self.dc.ordered_ips("api.pypy.dance"), ["1.2.3.4"])
+
     def test_clear_cache_protects_active_part_and_permanent_library(self):
         target = str(self.cache / "busy.mp4")
         (self.cache / "busy.mp4.part").write_bytes(b"partial")

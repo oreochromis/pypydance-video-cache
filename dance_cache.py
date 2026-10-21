@@ -950,10 +950,13 @@ def _parse_retry_after(value, default):
 
 def ordered_ips(host):
     """cdn.pypy.dance / play.udon.dance 优先使用用户设置的优选 IP（同为 Cloudflare，一个 IP 两家通用），
-    失效时自动回落到默认解析结果"""
+    失效时自动回落到默认解析结果。
+    注意实际下载会被 301 到带哈希的子域名（如 806bb815.cdn.pypy.dance），优选 IP 必须对子域名同样生效，
+    否则真实下载永远走系统 DNS 分配的节点，优选形同虚设。"""
     ips = list(_origin_ips.get(host, []))
     pref = (_config.get("preferred_cdn_ip") or "").strip()
-    if pref and _is_public_ip(pref) and host in ("cdn.pypy.dance", UDON_PLAY_HOST):
+    is_cdn = host == UDON_PLAY_HOST or host == "cdn.pypy.dance" or host.endswith(".cdn.pypy.dance")
+    if pref and _is_public_ip(pref) and is_cdn:
         ips = [pref] + [ip for ip in ips if ip != pref]
     return ips
 
@@ -1691,20 +1694,35 @@ def _pick_test_file():
 
 def _download_test(ip, filename, nbytes, timeout=20):
     """从指定 CF IP 下载 nbytes 测速，返回 (MB/s, None) 或 (None, 错误)。
-    节点可能忽略 Range 返回完整文件，读到 nbytes 即主动停止；另有总时限兜底。"""
+    节点可能忽略 Range 返回完整文件，读到 nbytes 即主动停止；另有总时限兜底。
+    cdn.pypy.dance 会 301 到带哈希的子域名，需跟随重定向（同一 IP 换 Host 头即可）。"""
     deadline = time.time() + timeout
     try:
         conn = http.client.HTTPConnection(ip, 80, timeout=timeout)
         t0 = time.time()
-        conn.request("GET", "/" + filename, headers={
-            "Host": "cdn.pypy.dance",
-            "Range": f"bytes=0-{nbytes - 1}",
-            "Accept-Encoding": "identity",
-        })
-        resp = conn.getresponse()
-        if resp.status not in (200, 206):
-            err = f"HTTP {resp.status}"
-            resp.read()
+        host, path = "cdn.pypy.dance", "/" + filename
+        resp = None
+        for _ in range(3):  # 跟随重定向，上限防环
+            conn.request("GET", path, headers={
+                "Host": host,
+                "Range": f"bytes=0-{nbytes - 1}",
+                "Accept-Encoding": "identity",
+            })
+            resp = conn.getresponse()
+            if resp.status in (301, 302, 303, 307, 308):
+                loc = resp.getheader("Location") or ""
+                resp.read()
+                u = urllib.parse.urlparse(loc)
+                if not u.hostname:
+                    break
+                host = u.hostname
+                path = (u.path or "/") + (("?" + u.query) if u.query else "")
+                continue
+            break
+        if resp is None or resp.status not in (200, 206):
+            err = f"HTTP {resp.status if resp else '无响应'}"
+            if resp is not None:
+                resp.read()
             conn.close()
             return None, err
         got = 0
