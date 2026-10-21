@@ -316,6 +316,17 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(row["source"], "youtube")
         self.assertEqual(row["storage"], "library")
 
+    def test_learning_mapping_refreshes_queue_state(self):
+        # 映射缺失时队列显示"待解析"；之后学习到映射（如播放时代理透传学到）
+        # 必须主动刷新队列，否则本地已缓存的歌会一直卡在"待解析"
+        self.queue_song(route=None)
+        self.events.clear()
+        (self.cache / "video.mp4").write_bytes(b"video")
+        self.dc.mark_mapping(1, "video.mp4")
+        queue_events = self.events_of("queue")
+        self.assertTrue(queue_events)
+        self.assertEqual(queue_events[-1]["items"][0]["state_code"], "cached")
+
     def test_listener_can_be_removed(self):
         self.dc.remove_listener(self.listener)
         self.dc.log("not delivered")

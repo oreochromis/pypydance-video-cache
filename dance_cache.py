@@ -476,6 +476,18 @@ def load_mapping():
         emit("warning", message=message)
 
 
+_mapping_refresh_last = 0.0
+
+
+def _refresh_queue_for_mapping():
+    """学到新映射后刷新队列状态（节流 1s：重建映射会批量调用，逐次刷新会卡 UI）"""
+    global _mapping_refresh_last
+    now = time.time()
+    if now - _mapping_refresh_last >= 1.0:
+        _mapping_refresh_last = now
+        refresh_queue_state()
+
+
 def mark_mapping(song_id, filename):
     global _mapping_dirty
     with _mapping_lock:
@@ -485,6 +497,9 @@ def mark_mapping(song_id, filename):
         if filename:
             _reverse_mapping[filename] = song_id
         _mapping_dirty = True
+    # 锁外刷新：refresh_queue_state -> describe_queue -> song_route 会再次获取 _mapping_lock，
+    # 锁内调用会死锁（该锁不可重入）
+    _refresh_queue_for_mapping()
 
 
 def flush_mapping():
