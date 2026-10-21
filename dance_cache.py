@@ -2745,6 +2745,7 @@ def _cli_listener(kind, data):
 
 UPDATE_CHECK_API = "https://api.github.com/repos/oreochromis/pypydance-video-cache/releases/latest"
 UPDATE_CHECK_PAGE = "https://github.com/oreochromis/pypydance-video-cache/releases/latest"
+PROJECT_PAGE = "https://github.com/oreochromis/pypydance-video-cache"
 
 
 def fetch_latest_release_tag(timeout=8):

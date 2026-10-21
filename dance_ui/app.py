@@ -698,6 +698,10 @@ class MainWindow(QMainWindow, Pages):
         import dance_cache
         QDesktopServices.openUrl(QUrl(dance_cache.UPDATE_CHECK_PAGE))
 
+    def open_project_page(self):
+        import dance_cache
+        QDesktopServices.openUrl(QUrl(dance_cache.PROJECT_PAGE))
+
     def check_updates_clicked(self):
         if self.controller.demo:
             self.update_status.setText("演示模式不检查更新。")
