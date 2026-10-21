@@ -73,6 +73,7 @@ DEFAULT_CONFIG = {
     "wd_library_dir": "",
     "max_cache_mb": 2048,
     "preload_count": 3,
+    "preload_sequential": True,
     "max_parallel": 2,
     "preferred_cdn_ip": "",
     "enable_youtube_cache": True,
@@ -308,7 +309,7 @@ def _validated_config(config, *, allow_shared_storage=False):
         value = cfg.get(name)
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
             raise ValueError(f"{name} 必须是大于等于 {minimum} 的整数")
-    for name in ("enable_youtube_cache", "youtube_permanent", "cdn_permanent", "wd_permanent"):
+    for name in ("enable_youtube_cache", "youtube_permanent", "cdn_permanent", "wd_permanent", "preload_sequential"):
         if not isinstance(cfg.get(name), bool):
             raise ValueError(f"{name} 必须是布尔值")
     for name in ("cache_dir", "library_dir", "wd_library_dir", "preferred_cdn_ip", "cooldown_file"):
@@ -2281,6 +2282,7 @@ def refresh_queue_state():
 
 def submit_preload(items):
     count = int(_config["preload_count"]) + 1
+    tasks = []
     for it in items[:count]:
         if not isinstance(it, dict) or _stop_event.is_set():
             continue
@@ -2290,7 +2292,7 @@ def submit_preload(items):
         if it.get("wd"):
             # WannaDance：文件名即编号，直接走 api.udon.dance 302 下载
             if not wd_local_path(sn):
-                start_wd_download(sn)
+                tasks.append(("wd", None, sn))
             continue
         if in_library(sn) or yt_local_path(sn):
             continue
@@ -2299,13 +2301,50 @@ def submit_preload(items):
             resolve_video_filename(sn)
             kind, payload = song_route(sn)
         if kind == "cdn" and not is_cached(payload):
-            start_background_download(payload, sn)
+            tasks.append(("cdn", payload, sn))
+    if _config.get("preload_sequential", True):
+        # 串行模式：整体替换待下载列表，正在下载的那首继续；优先级永远跟随最新队列
+        with _preload_dl_lock:
+            _preload_dl_items[:] = tasks
+        _preload_dl_wake.set()
+    else:
+        for kind, key, sn in tasks:
+            if kind == "wd":
+                start_wd_download(sn)
+            else:
+                start_background_download(key, sn)
     refresh_queue_state()
 
 
 _preload_lock = threading.Lock()
 _preload_pending = None
 _preload_wake = threading.Event()
+
+_preload_dl_lock = threading.Lock()
+_preload_dl_items = []       # 串行预载待下载队列，按队列优先级排序
+_preload_dl_wake = threading.Event()
+
+
+def _preload_download_loop():
+    """串行预载：严格按点歌队列顺序逐首下载，保证下一首最先下完。
+    正在播放的歌曲由代理通道边下边存，与此队列互不阻塞。"""
+    while not _stop_event.is_set():
+        with _preload_dl_lock:
+            task = _preload_dl_items.pop(0) if _preload_dl_items else None
+        if task is None:
+            _preload_dl_wake.wait(1.0)
+            _preload_dl_wake.clear()
+            continue
+        if _stop_event.is_set():
+            return
+        kind, key, song_id = task
+        try:
+            if kind == "wd":
+                download_wd(song_id)
+            else:
+                download_file(key, song_id)
+        except Exception as e:
+            log(f"预载下载出错（{key or song_id}）: {e}")
 
 
 def _preload_worker_loop():
@@ -2632,6 +2671,7 @@ def start_services():
                 _service_threads.append(_watcher)
                 _watcher.start()
                 _spawn_service_thread(_preload_worker_loop)
+                _spawn_service_thread(_preload_download_loop)
             else:
                 warnings.append("未找到 VRChat 日志目录，当前仅提供被动缓存")
             _running = True

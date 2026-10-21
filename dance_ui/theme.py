@@ -51,7 +51,7 @@ IMAGE_FITS = ("cover", "contain", "stretch", "center", "tile")
 THEME_FIELDS = COLOR_FIELDS | frozenset(NUMBER_RANGES) | {
     "background_image", "image_fit",
 }
-DEFAULT_PREFERENCES = {"scale": 100, "density": "standard", "logs_expanded": False}
+DEFAULT_PREFERENCES = {"scale": 100, "density": "standard", "logs_expanded": False, "dismissed_update_version": ""}
 
 _COMMON = {
     "background_image": "", "background_opacity": 1.0,
@@ -168,6 +168,10 @@ def _preference_value(key: str, value: Any) -> Any:
         if not isinstance(value, bool):
             raise ThemeError("日志默认展开必须是开关值。")
         return value
+    if key == "dismissed_update_version":
+        if not isinstance(value, str):
+            raise ThemeError("不再提醒的版本号必须是文本。")
+        return value.strip()
     raise ThemeError("未识别的阅读偏好：" + str(key))
 
 

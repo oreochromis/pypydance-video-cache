@@ -76,6 +76,7 @@ class MainWindow(QMainWindow, Pages):
         self._closing = False
         self._runtime_warning = ""
         self._update_manual = False
+        self._update_prompted = False
         self._banner_generation = 0
         self._row_height = 48
         self.setWindowTitle("VRChat 跳舞房助手" + (" · 界面演示" if controller.demo else ""))
@@ -397,6 +398,7 @@ class MainWindow(QMainWindow, Pages):
             if section in (None, "settings"):
                 self.preload_count.setMaximum(max(10, config["preload_count"]))
                 self.preload_count.setValue(config["preload_count"])
+                self.preload_sequential.setChecked(config.get("preload_sequential", True))
                 self.youtube_enabled.setChecked(config["enable_youtube_cache"])
                 self.cooldown_path.setText(config["cooldown_file"])
                 self.preferred_ip.setText(config["preferred_cdn_ip"])
@@ -422,7 +424,8 @@ class MainWindow(QMainWindow, Pages):
                      "cdn_permanent": self.cdn_permanent.isChecked(), "wd_permanent": self.wd_permanent.isChecked(),
                      "youtube_permanent": self.youtube_permanent.isChecked()}
         else:
-            patch = {"preload_count": self.preload_count.value(), "enable_youtube_cache": self.youtube_enabled.isChecked(),
+            patch = {"preload_count": self.preload_count.value(), "preload_sequential": self.preload_sequential.isChecked(),
+                     "enable_youtube_cache": self.youtube_enabled.isChecked(),
                      "cooldown_file": self.cooldown_path.text().strip(), "preferred_cdn_ip": self.preferred_ip.text().strip()}
         self.controller.apply_config(patch, section)
 
@@ -713,6 +716,29 @@ class MainWindow(QMainWindow, Pages):
         self.update_check_button.setEnabled(False)
         self.controller.check_updates()
 
+    def prompt_update(self, tag):
+        box = QMessageBox(self)
+        box.setWindowTitle("发现新版本")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(f"发现新版本 {tag}（当前 {__version__}）。")
+        box.setInformativeText("是否前往 GitHub 下载更新？")
+        update_button = box.addButton("前去更新", QMessageBox.ButtonRole.AcceptRole)
+        later_button = box.addButton("下次再提醒", QMessageBox.ButtonRole.RejectRole)
+        never_button = box.addButton("该版本不再提醒", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(update_button)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is update_button:
+            self.open_release_page()
+        elif clicked is never_button:
+            try:
+                self.store.change_preferences({"dismissed_update_version": tag})
+            except Exception as exc:
+                self.notify("保存偏好失败：" + str(exc), error=True)
+            else:
+                self.update_label.hide()
+                self.append_log(f"已设置不再提醒版本 {tag}；该版本的更新信息仍可在 设置 → 更新 中查看。")
+
     def render_session(self, data):
         self.session_stats.setText(
             f"本次会话：本地命中 {data.get('hits', 0)} 首 · 回源 {data.get('misses', 0)} 首"
@@ -866,11 +892,19 @@ class MainWindow(QMainWindow, Pages):
             self._update_manual = False
             self.update_check_button.setEnabled(True)
             if result and _version_newer(result, __version__):
-                self.update_label.setText(f"发现新版本 {result} · 点击查看")
-                self.update_label.show()
-                self.append_log(f"发现新版本 {result}（当前 {__version__}），可在 GitHub Releases 下载。")
+                dismissed = self.store.preferences.get("dismissed_update_version", "")
+                if result != dismissed:
+                    self.update_label.setText(f"发现新版本 {result} · 点击查看")
+                    self.update_label.show()
+                    self.append_log(f"发现新版本 {result}（当前 {__version__}），可在 GitHub Releases 下载。")
+                    if not self._update_prompted:
+                        self._update_prompted = True
+                        self.prompt_update(result)
                 if manual:
-                    self.update_status.setText(f"发现新版本 {result}！点击页脚的更新提示前往下载。")
+                    if result == dismissed:
+                        self.update_status.setText(f"发现新版本 {result}（已对该版本关闭提醒，此处仍会显示）。")
+                    else:
+                        self.update_status.setText(f"发现新版本 {result}！点击页脚的更新提示前往下载。")
             elif manual:
                 if result:
                     self.update_status.setText(f"已是最新版本（{__version__}）。")

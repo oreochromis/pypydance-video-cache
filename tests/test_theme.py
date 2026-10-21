@@ -63,7 +63,7 @@ class ThemeStoreTests(unittest.TestCase):
         self.assertEqual(reopened.active["radius"], 7)
 
     def test_preferences_survive_theme_changes_and_resets(self):
-        preferences = {"scale": 125, "density": "compact", "logs_expanded": True}
+        preferences = {"scale": 125, "density": "compact", "logs_expanded": True, "dismissed_update_version": ""}
         self.store.change_preferences(preferences)
         self.store.select("dark")
         self.store.change({"radius": 18})
@@ -234,7 +234,7 @@ class ThemeStoreTests(unittest.TestCase):
         recovered = ThemeStore(self.store.root_dir)
         self.assertEqual(recovered.active["accent"], BUILTIN_THEMES["light"]["accent"])
         self.assertEqual(recovered.active["radius"], 24)
-        self.assertEqual(recovered.preferences, {"scale": 100, "density": "compact", "logs_expanded": False})
+        self.assertEqual(recovered.preferences, {"scale": 100, "density": "compact", "logs_expanded": False, "dismissed_update_version": ""})
         self.assertEqual(recovered.active_id, "light")
         independent = ThemeStore(self.root / "another-store")
         self.assertEqual(independent.preferences, DEFAULT_PREFERENCES)

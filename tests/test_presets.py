@@ -53,7 +53,7 @@ class ThemeUpgradeTests(unittest.TestCase):
             themes.append(copy.deepcopy(self.previous))
         return {
             "version": 1, "active_theme": custom["id"], "themes": themes,
-            "preferences": {"scale": 125, "density": "compact", "logs_expanded": True},
+            "preferences": {"scale": 125, "density": "compact", "logs_expanded": True, "dismissed_update_version": ""},
         }
 
     def write_document(self, root, document):
