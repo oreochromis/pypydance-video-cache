@@ -1688,7 +1688,9 @@ def _pick_test_file():
 
 
 def _download_test(ip, filename, nbytes, timeout=20):
-    """从指定 CF IP 下载 nbytes 测速，返回 (MB/s, None) 或 (None, 错误)"""
+    """从指定 CF IP 下载 nbytes 测速，返回 (MB/s, None) 或 (None, 错误)。
+    节点可能忽略 Range 返回完整文件，读到 nbytes 即主动停止；另有总时限兜底。"""
+    deadline = time.time() + timeout
     try:
         conn = http.client.HTTPConnection(ip, 80, timeout=timeout)
         t0 = time.time()
@@ -1704,8 +1706,11 @@ def _download_test(ip, filename, nbytes, timeout=20):
             conn.close()
             return None, err
         got = 0
-        while True:
-            chunk = resp.read(256 * 1024)
+        while got < nbytes:
+            if time.time() > deadline:
+                conn.close()
+                return (None, "超时（速度过慢）") if got < nbytes // 4 else (got / 1048576 / max(time.time() - t0, 0.01), None)
+            chunk = resp.read(min(256 * 1024, nbytes - got))
             if not chunk:
                 break
             got += len(chunk)
