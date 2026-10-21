@@ -62,7 +62,7 @@ class MainWindow(QMainWindow, Pages):
         self._runtime_warning = ""
         self._banner_generation = 0
         self._row_height = 48
-        self.setWindowTitle("VRChat PyPyDance 助手" + (" · 界面演示" if controller.demo else ""))
+        self.setWindowTitle("VRChat 跳舞房助手" + (" · 界面演示" if controller.demo else ""))
         self.setWindowIcon(app_icon())
         self.resize(1100, 920)
         self.setMinimumSize(850, 680)
@@ -155,7 +155,7 @@ class MainWindow(QMainWindow, Pages):
         footer.setObjectName("footer")
         footer_box = QHBoxLayout(footer)
         footer_box.setContentsMargins(26, 9, 26, 9)
-        footer_box.addWidget(label("PyPyDance Cache  ·  " + __version__, muted=True))
+        footer_box.addWidget(label("VRChat 跳舞房助手  ·  " + __version__, muted=True))
         if self.controller.demo:
             footer_box.addWidget(status_label("演示数据 · 不启动服务", "warning"))
         footer_box.addStretch()
@@ -867,7 +867,7 @@ class MainWindow(QMainWindow, Pages):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="VRChat PyPyDance 缓存助手")
+    parser = argparse.ArgumentParser(description="VRChat 跳舞房助手")
     parser.add_argument("--demo", action="store_true", help="使用隔离的演示数据，不启动服务或修改缓存")
     parser.add_argument("--no-autostart", action="store_true", help="启动界面但不自动启动缓存服务")
     parser.add_argument("--steamvr-startup", action="store_true", help=argparse.SUPPRESS)
@@ -893,7 +893,7 @@ def main(argv=None):
             instance = claim_instance()
         except OSError as exc:
             app = QApplication.instance() or QApplication(sys.argv[:1])
-            QMessageBox.critical(None, "无法启动 PyPyDance 助手", "无法检查程序是否已在运行。\n\n" + str(exc))
+            QMessageBox.critical(None, "无法启动 VRChat 跳舞房助手", "无法检查程序是否已在运行。\n\n" + str(exc))
             return 1
         if instance is None:
             return 0
@@ -947,7 +947,7 @@ def main(argv=None):
                 "error": str(exc),
             })
             return 1
-        QMessageBox.critical(None, "无法初始化 PyPyDance 助手", "请检查配置文件及目录的读写权限。\n\n" + str(exc))
+        QMessageBox.critical(None, "无法初始化 VRChat 跳舞房助手", "请检查配置文件及目录的读写权限。\n\n" + str(exc))
         return 1
     finally:
         if controller is not None:

@@ -16,7 +16,7 @@ def main():
             print(message, file=sys.stderr)
         if os.name == "nt":
             import ctypes
-            ctypes.windll.user32.MessageBoxW(None, message, "PyPyDance 助手", 0x10)
+            ctypes.windll.user32.MessageBoxW(None, message, "VRChat 跳舞房助手", 0x10)
         return 1
     return run()
 

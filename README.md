@@ -1,8 +1,8 @@
-# PyPyDance Cache · Windows 版
+# VRChat 跳舞房助手 · Windows 版
 
-<img src="assets/app-icon.png" width="96" alt="PyPyDance Cache PY 图标">
+<img src="assets/app-icon.png" width="96" alt="VRChat 跳舞房助手图标">
 
-为 VRChat 的 PyPyDance 跳舞房提供本地视频缓存、队列预加载和永久曲库管理。**本软件仅支持 Windows x64。**
+为 VRChat 的 PyPyDance / WannaDance 跳舞房提供本地视频缓存、队列预加载和永久曲库管理。**本软件仅支持 Windows x64。**
 
 本 Fork 基于 [oreochromis/pypydance-video-cache](https://github.com/oreochromis/pypydance-video-cache) 继续开发，原作者为 **Bilibili @鲨鲨比亚Sharkspeare**。保留原有 Python 缓存核心与命令行入口，使用 Qt for Python 重构桌面界面，并增加日常使用功能。
 

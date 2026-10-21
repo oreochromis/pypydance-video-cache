@@ -52,7 +52,7 @@ def launch_manifest(executable, arguments, working_directory, powershell):
         "binary_path_windows": str(powershell),
         "arguments": "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand " + encoded,
         "working_directory": str(working_directory),
-        "strings": {"en_us": {"name": "PyPyDance Cache", "description": "PyPyDance video cache companion"}},
+        "strings": {"en_us": {"name": "VRChat Dance Assistant", "description": "VRChat dance room video cache companion"}},
     }]}
 
 
