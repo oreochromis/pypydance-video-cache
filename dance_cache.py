@@ -212,18 +212,14 @@ def load_config():
         try:
             os.makedirs(lib, exist_ok=True)
         except Exception as e:
-            warnings.append(f"曲库目录不可用，已停用永久保存: {e}")
-            cfg["library_dir"] = ""
-            cfg["youtube_permanent"] = False
-            cfg["cdn_permanent"] = False
+            # 保留开关与目录原值，由运行时暂缓机制处理，修复目录后自动生效
+            warnings.append(f"曲库目录不可用，永久保存暂缓生效: {e}")
     wd_lib = cfg.get("wd_library_dir") or ""
     if wd_lib:
         try:
             os.makedirs(wd_lib, exist_ok=True)
         except Exception as e:
-            warnings.append(f"WannaDance 曲库目录不可用，已停用其永久保存: {e}")
-            cfg["wd_library_dir"] = ""
-            cfg["wd_permanent"] = False
+            warnings.append(f"WannaDance 曲库目录不可用，其永久保存暂缓生效: {e}")
     with _config_lock:
         _config = cfg
     if _same_directory(cfg["cache_dir"], cfg.get("library_dir")):
@@ -666,7 +662,7 @@ def clear_cache():
               "failed_count": 0, "errors": []}
     with _downloads_lock:
         directory = _config["cache_dir"]
-        if _same_directory(directory, _config.get("library_dir")):
+        if _same_directory(directory, _config.get("library_dir")) or _same_directory(directory, _config.get("wd_library_dir")):
             raise ValueError("缓存目录与永久曲库相同，已拒绝清理以保护曲库")
         try:
             names = os.listdir(directory)
@@ -868,7 +864,7 @@ def _hosts_watchdog_loop(include_api):
                 with open(HOSTS_PATH, "r", encoding="utf-8", errors="replace") as f:
                     lines = f.readlines()
                 marked = [l for l in lines if HOSTS_MARK in l]
-                missing = [h for h in expected if not any(h in l for l in marked)]
+                missing = [h for h in expected if not any(h in l.split() for l in marked)]
                 if not missing:
                     continue
                 kept = [l for l in lines if HOSTS_MARK not in l]
@@ -1129,6 +1125,14 @@ def _cancelled(run_id):
     return _stop_event.is_set() or run_id != _run_id
 
 
+def _storage_label(path):
+    """文件落在永久曲库（PyPyDance 或 WannaDance）返回 library，否则 cache"""
+    dirname = os.path.dirname(path)
+    if _same_directory(dirname, _config.get("library_dir")) or _same_directory(dirname, _config.get("wd_library_dir")):
+        return "library"
+    return "cache"
+
+
 def _begin_download(target, filename, song_id=None, source="cdn"):
     key = _canonical_path(target)
     if song_id is None:
@@ -1137,7 +1141,7 @@ def _begin_download(target, filename, song_id=None, source="cdn"):
     meta = {
         "task_id": key, "filename": filename, "song_id": song_id,
         "source": source, "target_path": target,
-        "storage": "library" if _same_directory(os.path.dirname(target), _config.get("library_dir")) else "cache",
+        "storage": _storage_label(target),
         "done": 0, "total": 0,
     }
     with _downloads_lock:
@@ -1415,7 +1419,7 @@ def cleanup_cache():
     with _downloads_lock:
         try:
             directory = _config["cache_dir"]
-            if _same_directory(directory, _config.get("library_dir")):
+            if _same_directory(directory, _config.get("library_dir")) or _same_directory(directory, _config.get("wd_library_dir")):
                 return
             limit = int(_config["max_cache_mb"]) * 1048576
             files = []
@@ -1789,7 +1793,7 @@ class DanceHandler(BaseHTTPRequestHandler):
         if not name:
             self.send_error(404)
             return
-        p = cooldown_check(name) or local_path_for(name)
+        p = cooldown_check(name, consume=False) or local_path_for(name)
         if p:
             self.send_response(200)
             self.send_header("Content-Type", "video/mp4")
@@ -1831,7 +1835,7 @@ class DanceHandler(BaseHTTPRequestHandler):
         sid = int(m.group(1))
         name = wd_cache_name(sid)
         if head_only:
-            p = cooldown_check(name) or wd_local_path(sid)
+            p = cooldown_check(name, consume=False) or wd_local_path(sid)
             if p:
                 self.send_response(200)
                 self.send_header("Content-Type", "video/mp4")
@@ -1982,7 +1986,7 @@ class DanceHandler(BaseHTTPRequestHandler):
             elif not range_header and resp.status == 200:
                 target = wd_target_path(wd_id) if wd_id is not None else target_path(name)
                 total = int(resp.getheader("Content-Length") or 0)
-                meta = _begin_download(target, name)
+                meta = _begin_download(target, name, wd_id, "wannadance" if wd_id is not None else "cdn")
             if meta is None:
                 while not _cancelled(run_id):
                     chunk = resp.read(256 * 1024)
@@ -2180,7 +2184,7 @@ def describe_queue(items):
             "name": str(it.get("videoName") or "?"), "player": str(it.get("playerName") or ""),
             "song_id": sn if valid_id else None, "filename": filename,
             "source": task["source"] if task else source, "position": index,
-            "storage": ("library" if _same_directory(os.path.dirname(local), _config.get("library_dir")) else "cache") if local else None,
+            "storage": _storage_label(local) if local else None,
             "task_id": task["task_id"] if task else None,
             "error": None,
         }
@@ -2241,6 +2245,36 @@ def submit_preload(items):
     refresh_queue_state()
 
 
+_preload_lock = threading.Lock()
+_preload_pending = None
+_preload_wake = threading.Event()
+
+
+def _preload_worker_loop():
+    """预载在独立线程执行：resolve_video_filename 要做网络请求并可能等待限流，
+    若跑在日志监听线程上，限流期间队列刷新与 YouTube 直链捕获会一起停摆。"""
+    while not _stop_event.is_set():
+        _preload_wake.wait(1.0)
+        _preload_wake.clear()
+        with _preload_lock:
+            items = _preload_pending
+            _preload_pending = None
+        if items is None:
+            continue
+        try:
+            submit_preload(items)
+        except Exception as e:
+            log(f"预载处理出错: {e}")
+
+
+def submit_preload_async(items):
+    """投递最新队列给预载线程；新队列到达时覆盖尚未处理的旧队列。"""
+    global _preload_pending
+    with _preload_lock:
+        _preload_pending = copy.deepcopy(list(items or []))
+    _preload_wake.set()
+
+
 # ---------------- Cool Down（切歌时把下一首替换为放松视频，一次性） ----------------
 
 _cooldown_armed = False      # 待命状态
@@ -2286,6 +2320,8 @@ def _current_song_filename():
     sn = items[0].get("songNum", 0)
     if not (isinstance(sn, int) and not isinstance(sn, bool) and sn > 0):
         return None
+    if items[0].get("wd"):
+        return wd_cache_name(sn)
     kind, payload = song_route(sn)
     return payload if kind == "cdn" else (f"yt_{sn}.mp4" if kind == "yt" else None)
 
@@ -2318,8 +2354,10 @@ def cooldown_active():
     return get_cooldown_state()["active"]
 
 
-def cooldown_check(filename):
-    """请求级一次性替换；下一个不同文件名请求解除，不伪造播放结束事件。"""
+def cooldown_check(filename, consume=True):
+    """请求级一次性替换；下一个不同文件名请求解除，不伪造播放结束事件。
+    consume=False（HEAD 探测）：serving 中照常返回替换文件，armed 时也可返回
+    替换文件的响应头以免 HEAD 打到上游，但不消耗待命机会、不做状态迁移。"""
     global _cooldown_armed, _cooldown_serving, _cooldown_exclude
     changed = False
     message = None
@@ -2330,15 +2368,23 @@ def cooldown_check(filename):
                 path = cooldown_file()
                 if path:
                     return path
+                if not consume:
+                    return None
                 _cooldown_serving = None
                 _cooldown_exclude = None
                 changed = True
                 message = "Cool Down 视频已不可用，已恢复正常请求"
             else:
+                if not consume:
+                    return None
                 _cooldown_serving = None
                 _cooldown_exclude = None
                 changed = True
                 message = "已切换到其他歌曲，Cool Down 本次替换结束"
+        if not consume:
+            if _cooldown_armed and filename != _cooldown_exclude:
+                return cooldown_file()
+            return None
         if _cooldown_armed and filename != _cooldown_exclude:
             path = cooldown_file()
             _cooldown_armed = False
@@ -2387,6 +2433,10 @@ class LogWatcher(threading.Thread):
                 f.seek(max(0, size - 2 * 1024 * 1024))
                 tail = f.read()
             self.offset = size
+            # 上次会话留下的旧日志不做尾部扫描，避免预载已不在队列的歌、拿过期链接录流
+            if time.time() - os.path.getmtime(newest) > 600:
+                log("日志文件超过 10 分钟未更新，跳过历史内容（等待 VRChat 写入新日志）")
+                return
             tail_lines = tail.splitlines()
             if get_runtime_state()["youtube_available"]:
                 scan_resolved_youtube(tail_lines)
@@ -2423,7 +2473,7 @@ class LogWatcher(threading.Thread):
             emit("queue", items=[])
             return
         emit("queue", items=describe_queue(items))
-        submit_preload(items)
+        submit_preload_async(items)
 
 
 # ---------------- 服务启停 ----------------
@@ -2523,6 +2573,7 @@ def start_services():
                 _watcher = LogWatcher()
                 _service_threads.append(_watcher)
                 _watcher.start()
+                _spawn_service_thread(_preload_worker_loop)
             else:
                 warnings.append("未找到 VRChat 日志目录，当前仅提供被动缓存")
             _running = True
