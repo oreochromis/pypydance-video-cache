@@ -402,6 +402,7 @@ class MainWindow(QMainWindow, Pages):
                 self.youtube_enabled.setChecked(config["enable_youtube_cache"])
                 self.cooldown_path.setText(config["cooldown_file"])
                 self.preferred_ip.setText(config["preferred_cdn_ip"])
+                self.auto_prefer_cdn.setChecked(config.get("auto_prefer_cdn", True))
             for name in (section,) if section else ("storage", "settings"):
                 self._dirty[name] = False
                 self.apply_buttons[name].setEnabled(False)
@@ -426,7 +427,8 @@ class MainWindow(QMainWindow, Pages):
         else:
             patch = {"preload_count": self.preload_count.value(), "preload_sequential": self.preload_sequential.isChecked(),
                      "enable_youtube_cache": self.youtube_enabled.isChecked(),
-                     "cooldown_file": self.cooldown_path.text().strip(), "preferred_cdn_ip": self.preferred_ip.text().strip()}
+                     "cooldown_file": self.cooldown_path.text().strip(), "preferred_cdn_ip": self.preferred_ip.text().strip(),
+                     "auto_prefer_cdn": self.auto_prefer_cdn.isChecked()}
         self.controller.apply_config(patch, section)
 
     def render_steamvr_controls(self):
@@ -820,6 +822,17 @@ class MainWindow(QMainWindow, Pages):
         elif kind == "state":
             self._runtime.update(data)
             self.render_runtime()
+        elif kind == "config":
+            # 后台自动修改（如自动优选 CDN 写入优选 IP）后同步界面；
+            # 用户有未应用的编辑时只更新缓存，不覆盖输入框
+            self.controller.reload_config()
+            if not self._dirty["settings"]:
+                config = self.controller.config()
+                self._syncing = True
+                try:
+                    self.preferred_ip.setText(config["preferred_cdn_ip"])
+                finally:
+                    self._syncing = False
         elif kind == "queue":
             self._queue = data.get("items", [])
             self.render_queue()

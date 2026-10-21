@@ -76,6 +76,7 @@ DEFAULT_CONFIG = {
     "preload_sequential": True,
     "max_parallel": 2,
     "preferred_cdn_ip": "",
+    "auto_prefer_cdn": True,
     "enable_youtube_cache": True,
     "youtube_permanent": True,
     "cdn_permanent": False,
@@ -309,7 +310,7 @@ def _validated_config(config, *, allow_shared_storage=False):
         value = cfg.get(name)
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
             raise ValueError(f"{name} 必须是大于等于 {minimum} 的整数")
-    for name in ("enable_youtube_cache", "youtube_permanent", "cdn_permanent", "wd_permanent", "preload_sequential"):
+    for name in ("enable_youtube_cache", "youtube_permanent", "cdn_permanent", "wd_permanent", "preload_sequential", "auto_prefer_cdn"):
         if not isinstance(cfg.get(name), bool):
             raise ValueError(f"{name} 必须是布尔值")
     for name in ("cache_dir", "library_dir", "wd_library_dir", "preferred_cdn_ip", "cooldown_file"):
@@ -1781,6 +1782,41 @@ def speed_test_ips():
     emit("speedtest_done", results=results)
 
 
+def auto_speedtest_apply():
+    """服务启动后自动做一次快速测速，把最快节点写入优选 IP；失败静默保留现状。
+    热生效（ordered_ips 每次现读配置），无需重启服务。"""
+    if _stop_event.wait(3):  # 让位给启动解析与首批下载
+        return
+    filename = _pick_test_file()
+    candidates = gather_candidate_ips("cdn.pypy.dance")
+    pref = (_config.get("preferred_cdn_ip") or "").strip()
+    if pref and _is_public_ip(pref):
+        candidates = [pref] + [ip for ip in candidates if ip != pref]
+    candidates = candidates[:16]
+    if not candidates:
+        return
+    log(f"自动优选 CDN：对 {len(candidates)} 个候选节点测速...")
+    best_ip, best_mbps = None, 0.0
+    for ip in candidates:
+        if _stop_event.is_set():
+            return
+        mbps, _ = _download_test(ip, filename, SPEEDTEST_BYTES)
+        if mbps is not None and mbps > best_mbps:
+            best_ip, best_mbps = ip, mbps
+    if best_ip is None:
+        log("自动优选 CDN：所有候选节点均未连通，保持当前设置")
+        return
+    if best_ip == pref:
+        log(f"自动优选 CDN：当前优选 {pref} 就是最快（{best_mbps:.2f} MB/s），保持不变")
+        return
+    try:
+        update_config({"preferred_cdn_ip": best_ip})
+    except Exception as e:
+        log(f"自动优选 CDN 测得最快 {best_ip}（{best_mbps:.2f} MB/s），但写入配置失败: {e}")
+        return
+    log(f"自动优选 CDN：已应用 {best_ip}（{best_mbps:.2f} MB/s）" + (f"，替换原 {pref}" if pref else ""))
+
+
 # Cloudflare 官方 IPv4 段（https://www.cloudflare.com/ips-v4）
 CF_IP_RANGES = [
     "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
@@ -2716,6 +2752,8 @@ def start_services():
                 warnings.append("未找到 VRChat 日志目录，当前仅提供被动缓存")
             _running = True
             _reset_session_stats()
+            if _config.get("auto_prefer_cdn", True):
+                _spawn_service_thread(auto_speedtest_apply)
             _set_runtime_state(phase="running", running=True, youtube_available=yt_mode,
                                queue_watcher_available=watcher_available, hosts_restore_pending=True,
                                warnings=warnings, error=None)

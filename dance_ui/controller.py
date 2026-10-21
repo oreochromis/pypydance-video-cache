@@ -73,6 +73,11 @@ class CoreController(QObject):
         # UI reads never wait for a worker holding the core's configuration lock.
         return copy.deepcopy(self._demo_config if self.demo else self._config_cache)
 
+    def reload_config(self):
+        """后台任务（如自动优选 CDN）直接改配置后，同步 UI 侧的配置缓存。"""
+        if not self.demo:
+            self._config_cache = core.get_config()
+
     def busy(self, operation: str) -> bool:
         return operation in self._workers
 

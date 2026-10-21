@@ -244,6 +244,26 @@ class CoreTests(unittest.TestCase):
             self.dc.update_config({"enable_youtube_cache": False})
         self.dc._running = False
 
+    def test_auto_speedtest_applies_fastest_ip(self):
+        self.dc._config["preferred_cdn_ip"] = ""
+        with mock.patch.object(self.dc, "gather_candidate_ips", return_value=["1.1.1.1", "2.2.2.2"]), \
+             mock.patch.object(self.dc, "_download_test",
+                               side_effect=lambda ip, fn, n: (1.0 if ip == "1.1.1.1" else 5.0, None)), \
+             mock.patch.object(self.dc.time, "sleep", side_effect=AssertionError("no sleep")), \
+             mock.patch.object(self.dc._stop_event, "wait", return_value=False):
+            self.dc.auto_speedtest_apply()
+        self.assertEqual(self.dc.get_config()["preferred_cdn_ip"], "2.2.2.2")
+        saved = json.loads((self.root / "config.json").read_text())
+        self.assertEqual(saved["preferred_cdn_ip"], "2.2.2.2")
+
+    def test_auto_speedtest_keeps_current_when_all_fail(self):
+        self.dc._config["preferred_cdn_ip"] = "3.3.3.3"
+        with mock.patch.object(self.dc, "gather_candidate_ips", return_value=["1.1.1.1"]), \
+             mock.patch.object(self.dc, "_download_test", return_value=(None, "HTTP 503")), \
+             mock.patch.object(self.dc._stop_event, "wait", return_value=False):
+            self.dc.auto_speedtest_apply()
+        self.assertEqual(self.dc.get_config()["preferred_cdn_ip"], "3.3.3.3")
+
     def test_preferred_cdn_ip_applies_to_redirected_subdomain(self):
         self.dc._config["preferred_cdn_ip"] = "172.66.157.15"
         self.dc._origin_ips["cdn.pypy.dance"] = ["104.20.20.68"]
