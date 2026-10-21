@@ -285,7 +285,7 @@ class Pages:
         self.library_path.textChanged.connect(lambda: self.mark_dirty("storage"))
         path_row, path_box = row(self.library_path, button("选择目录", self.browse_library))
         path_box.setStretch(0, 1)
-        library.box.addWidget(field("曲库目录", path_row, "更改目录前请先停止服务。"))
+        library.box.addWidget(field("曲库目录", path_row, "运行中可直接更改；有下载或曲库任务进行时会被暂时拒绝，稍后再试即可。"))
         self.cdn_permanent = QCheckBox("永久保存 CDN 视频")
         self.youtube_permanent = QCheckBox("永久保存 YouTube 视频")
         self.cdn_permanent.toggled.connect(lambda: self.mark_dirty("storage"))

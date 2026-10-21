@@ -235,7 +235,11 @@ class CoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.dc.update_config({"cache_dir": str(self.root / "other")})
         self.dc._downloads_in_progress.clear()
+        # 运行中但无在途任务：目录热改直接生效，无需停止服务
         self.dc._running = True
+        result = self.dc.update_config({"cache_dir": str(self.root / "other")})
+        self.assertEqual(result["changed"], ["cache_dir"])
+        self.assertEqual(self.dc.get_config()["cache_dir"], str(self.root / "other"))
         with self.assertRaises(ValueError):
             self.dc.update_config({"enable_youtube_cache": False})
         self.dc._running = False

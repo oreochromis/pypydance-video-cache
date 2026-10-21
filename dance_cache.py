@@ -391,8 +391,10 @@ def update_config(patch):
             return {"restart_required": False, "changed": []}
         paths_changed = bool({"cache_dir", "library_dir", "wd_library_dir"} & set(changed))
         busy = bool(_downloads_in_progress) or rebuilding() or verifying()
-        if paths_changed and (_running or busy):
-            raise ValueError("请先停止服务并等待下载或曲库任务结束，再修改保存目录")
+        if paths_changed and busy:
+            # 目录查找/保存路径每次现读配置，运行中改目录即时生效；
+            # 仅在途下载与曲库任务已按旧路径落盘，需等其结束
+            raise ValueError("有下载或曲库任务正在进行，请等待结束后再修改保存目录（无需停止服务）")
         if "enable_youtube_cache" in changed and (_running or busy):
             raise ValueError("请先停止服务并等待后台任务结束，再修改 YouTube 缓存开关")
         if "cooldown_file" in changed and cooldown_active():
