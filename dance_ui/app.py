@@ -75,6 +75,7 @@ class MainWindow(QMainWindow, Pages):
         self._can_close = False
         self._closing = False
         self._runtime_warning = ""
+        self._update_manual = False
         self._banner_generation = 0
         self._row_height = 48
         self.setWindowTitle("VRChat 跳舞房助手" + (" · 界面演示" if controller.demo else ""))
@@ -697,6 +698,17 @@ class MainWindow(QMainWindow, Pages):
         import dance_cache
         QDesktopServices.openUrl(QUrl(dance_cache.UPDATE_CHECK_PAGE))
 
+    def check_updates_clicked(self):
+        if self.controller.demo:
+            self.update_status.setText("演示模式不检查更新。")
+            return
+        if self.controller.busy("update_check"):
+            return
+        self._update_manual = True
+        self.update_status.setText("正在检查更新…")
+        self.update_check_button.setEnabled(False)
+        self.controller.check_updates()
+
     def render_session(self, data):
         self.session_stats.setText(
             f"本次会话：本地命中 {data.get('hits', 0)} 首 · 回源 {data.get('misses', 0)} 首"
@@ -846,10 +858,20 @@ class MainWindow(QMainWindow, Pages):
             self.notify(text, error=bool(result.get("failed_count")))
             self.controller.refresh_stats()
         elif operation == "update_check":
+            manual = self._update_manual
+            self._update_manual = False
+            self.update_check_button.setEnabled(True)
             if result and _version_newer(result, __version__):
                 self.update_label.setText(f"发现新版本 {result} · 点击查看")
                 self.update_label.show()
                 self.append_log(f"发现新版本 {result}（当前 {__version__}），可在 GitHub Releases 下载。")
+                if manual:
+                    self.update_status.setText(f"发现新版本 {result}！点击页脚的更新提示前往下载。")
+            elif manual:
+                if result:
+                    self.update_status.setText(f"已是最新版本（{__version__}）。")
+                else:
+                    self.update_status.setText("检查失败：无法访问 GitHub，请检查网络或稍后再试。")
         elif operation == "diagnostics":
             self._write_diagnostics(result)
         elif operation == "shutdown":
@@ -860,7 +882,11 @@ class MainWindow(QMainWindow, Pages):
     @Slot(str, str)
     def on_error(self, operation, message):
         if operation == "update_check":
-            return  # 更新检查失败（无网络等）静默忽略
+            if self._update_manual:
+                self._update_manual = False
+                self.update_status.setText("检查失败：" + message)
+                self.update_check_button.setEnabled(True)
+            return  # 自动检查失败（无网络等）静默忽略
         self.notify(message, error=True)
         if operation == "steamvr_startup":
             self.steamvr_hint.setText(("保存失败，更改仍保留：" if self._steamvr_pending == "save" else "读取失败，无法确认当前状态：") + message)

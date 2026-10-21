@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QVBoxLayout, QWidget,
 )
 
+from . import __version__
 from .widgets import Card, label, page, section_title, status_label, table
 
 
@@ -195,6 +196,17 @@ class Pages:
         network.box.addWidget(favorite_actions)
 
         box.addWidget(network)
+
+        update = Card()
+        update.box.addWidget(label("更新", subheading=True))
+        version_row, version_box = row(label(f"当前版本 {__version__}", muted=True))
+        version_box.addStretch()
+        self.update_check_button = button("检查更新", self.check_updates_clicked)
+        version_box.addWidget(self.update_check_button)
+        update.box.addWidget(version_row)
+        self.update_status = label("启动时会自动检查一次新版本，也可以随时手动检查。", muted=True, wrap=True)
+        update.box.addWidget(self.update_status)
+        box.addWidget(update)
         box.addStretch()
         return self.with_apply_footer(area, "settings")
 
