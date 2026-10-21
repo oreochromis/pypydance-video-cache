@@ -344,19 +344,17 @@ class MainWindow(QMainWindow, Pages):
         wd_count, wd_mb = data.get("wd_count", 0), data.get("wd_mb", 0)
         cfg = self.controller.config()
         if cfg.get("library_dir"):
-            self.library_summary.setText(
-                f"PyPyDance：{lib_count} 个视频 · {bytes_text(lib_mb * 1024**2)}")
+            self.library_summary.setText(f"{lib_count} 个视频 · {bytes_text(lib_mb * 1024**2)}")
         elif cfg.get("cdn_permanent") or cfg.get("youtube_permanent"):
-            self.library_summary.setText("PyPyDance：尚未设置曲库目录（永久保存暂缓生效，填写目录后自动启用）")
+            self.library_summary.setText("尚未设置曲库目录（永久保存暂缓生效）")
         else:
-            self.library_summary.setText("PyPyDance：尚未设置曲库目录")
+            self.library_summary.setText("尚未设置曲库目录")
         if cfg.get("wd_library_dir"):
-            self.wd_library_summary.setText(
-                f"WannaDance：{wd_count} 个视频 · {bytes_text(wd_mb * 1024**2)}")
+            self.wd_library_summary.setText(f"{wd_count} 个视频 · {bytes_text(wd_mb * 1024**2)}")
         elif cfg.get("wd_permanent"):
-            self.wd_library_summary.setText("WannaDance：尚未设置曲库目录（永久保存暂缓生效，填写目录后自动启用）")
+            self.wd_library_summary.setText("尚未设置曲库目录（永久保存暂缓生效）")
         else:
-            self.wd_library_summary.setText("WannaDance：尚未设置曲库目录")
+            self.wd_library_summary.setText("尚未设置曲库目录")
     def resize_tables(self):
         for widget, limit in ((self.queue_table, 4), (self.download_table, 3), (self.scan_table, 4), (self.favorites_table, 6)):
             rows = min(limit, widget.rowCount())
