@@ -110,6 +110,7 @@ class CoreController(QObject):
             self.event.emit("download_start", {"filename": "demo-download.mp4", "task_id": "demo-download", "song_id": 6421, "source": "cdn", "storage": "cache"})
             self.event.emit("progress", {"filename": "demo-download.mp4", "task_id": "demo-download",
                                         "done": 96 * 1024**2, "total": 150 * 1024**2, "demo_speed": 8.2 * 1024**2})
+            self.event.emit("session", {"hits": 12, "misses": 3, "saved_mb": 1540.0})
             self._publish_demo_cooldown()
             self.event.emit("log", {"msg": "界面演示模式：使用示例数据，不启动网络服务，也不修改系统或缓存文件。"})
             return
@@ -122,6 +123,7 @@ class CoreController(QObject):
             self.event.emit("download_start", task)
             self.event.emit("progress", task)
         self.event.emit("cooldown", core.get_cooldown_state())
+        self.event.emit("session", core.get_session_stats())
         self.refresh_stats()
 
     def configure_steamvr(self, state_dir):
@@ -278,6 +280,16 @@ class CoreController(QObject):
             ], "demo": True})
             return
         self._run("scan", core.full_scan_ips if full else core.speed_test_ips)
+
+    def check_updates(self):
+        if self.demo:
+            return
+        self._run("update_check", core.fetch_latest_release_tag)
+
+    def collect_diagnostics(self):
+        if self.demo:
+            return
+        self._run("diagnostics", core.collect_diagnostics)
 
     def cooldown(self):
         if self.demo:

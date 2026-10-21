@@ -143,7 +143,7 @@ def wait_rate_limit():
 
 
 # ---------------- 事件总线 ----------------
-# 事件类型: log / queue / progress / download_start / download_done / stats / state
+# 事件类型: log / queue / progress / download_start / download_done / stats / state / session
 #          rebuild_progress / rebuild_done / verify_progress / verify_done
 
 _listeners = []
@@ -178,6 +178,60 @@ def emit(kind, **data):
 
 def log(msg):
     emit("log", msg=msg)
+
+
+# ---------------- 会话统计（本地命中/回源/节省流量，按文件去重） ----------------
+
+_session_lock = threading.Lock()
+_session_hits = 0
+_session_misses = 0
+_session_saved_bytes = 0
+_session_hit_files = set()
+_session_miss_files = set()
+
+
+def get_session_stats():
+    with _session_lock:
+        return {"hits": _session_hits, "misses": _session_misses,
+                "saved_mb": _session_saved_bytes / 1048576}
+
+
+def _emit_session():
+    emit("session", **get_session_stats())
+
+
+def _reset_session_stats():
+    global _session_hits, _session_misses, _session_saved_bytes
+    with _session_lock:
+        _session_hits = _session_misses = 0
+        _session_saved_bytes = 0
+        _session_hit_files.clear()
+        _session_miss_files.clear()
+    _emit_session()
+
+
+def _note_session_hit(filename, path):
+    global _session_hits, _session_saved_bytes
+    with _session_lock:
+        if filename in _session_hit_files:
+            return
+        _session_hit_files.add(filename)
+        _session_hits += 1
+        try:
+            _session_saved_bytes += os.path.getsize(path)
+        except OSError:
+            pass
+    _emit_session()
+
+
+def _note_session_miss(filename):
+    global _session_misses
+    with _session_lock:
+        if filename in _session_miss_files:
+            return
+        _session_miss_files.add(filename)
+        _session_misses += 1
+    _emit_session()
 
 
 # ---------------- 配置 ----------------
@@ -1818,9 +1872,11 @@ class DanceHandler(BaseHTTPRequestHandler):
             log(f"本地命中 {name} -> {os.path.basename(p)}")
             if not replacement:
                 touch(p)
+            _note_session_hit(name, p)
             self._serve_file(p)
         else:
             log(f"本地未命中 {name}，回源拉取")
+            _note_session_miss(name)
             self._proxy()
 
     # ---------------- play.udon.dance（WannaDance）处理 ----------------
@@ -1852,9 +1908,11 @@ class DanceHandler(BaseHTTPRequestHandler):
             log(f"本地命中 {name} (WannaDance) -> {os.path.basename(p)}")
             if not replacement:
                 touch(p)
+            _note_session_hit(name, p)
             self._serve_file(p)
         else:
             log(f"本地未命中 {name} (WannaDance)，回源拉取")
+            _note_session_miss(name)
             self._proxy(upstream_host=UDON_PLAY_HOST, upstream_path=self.path,
                         name=name, wd_id=sid)
 
@@ -2577,6 +2635,7 @@ def start_services():
             else:
                 warnings.append("未找到 VRChat 日志目录，当前仅提供被动缓存")
             _running = True
+            _reset_session_stats()
             _set_runtime_state(phase="running", running=True, youtube_available=yt_mode,
                                queue_watcher_available=watcher_available, hosts_restore_pending=True,
                                warnings=warnings, error=None)
@@ -2680,6 +2739,114 @@ def _cli_listener(kind, data):
         if data.get("lib_enabled"):
             line += f" | 曲库: {data['lib_count']} 首 | {data['lib_mb']:.0f} MB"
         print(line, flush=True)
+
+
+# ---------------- 诊断信息导出与版本更新检查 ----------------
+
+UPDATE_CHECK_API = "https://api.github.com/repos/oreochromis/pypydance-video-cache/releases/latest"
+UPDATE_CHECK_PAGE = "https://github.com/oreochromis/pypydance-video-cache/releases/latest"
+
+
+def fetch_latest_release_tag(timeout=8):
+    """查询 GitHub 最新 Release 的 tag；网络失败返回 None（调用方静默忽略）。"""
+    req = urllib.request.Request(UPDATE_CHECK_API, headers={
+        "User-Agent": "VRChatDanceAssistant", "Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+    tag = data.get("tag_name") if isinstance(data, dict) else None
+    return str(tag) if tag else None
+
+
+def collect_diagnostics():
+    """汇总排障所需的本地状态为纯文本；路径原样保留（诊断需要），不含任何账号信息。"""
+    import platform
+    out = []
+    add = out.append
+    add(f"生成时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    add(f"系统: {platform.platform()}")
+    add(f"Python: {sys.version.split()[0]}")
+    try:
+        admin = bool(ctypes.windll.shell32.IsUserAnAdmin()) if os.name == "nt" else False
+    except Exception:
+        admin = False
+    add(f"管理员权限: {'是' if admin else '否（hosts 劫持与 80 端口需要管理员）'}")
+
+    state = get_runtime_state()
+    add("")
+    add("== 运行状态 ==")
+    for key in ("phase", "running", "youtube_available", "queue_watcher_available",
+                "hosts_restore_pending", "error"):
+        if key in state:
+            add(f"{key}: {state[key]}")
+    for warning in state.get("warnings") or []:
+        add(f"警告: {warning}")
+
+    add("")
+    add("== 配置 ==")
+    for key, value in sorted(get_config().items()):
+        add(f"{key}: {value}")
+
+    add("")
+    add("== hosts 劫持条目 ==")
+    try:
+        with open(HOSTS_PATH, "r", encoding="utf-8", errors="replace") as f:
+            marked = [l.strip() for l in f if HOSTS_MARK in l]
+    except OSError as e:
+        marked = []
+        add(f"hosts 读取失败: {e}")
+    expected = hijack_host_list(True)
+    for host in expected:
+        present = any(host in l.split() for l in marked)
+        add(f"{'[已劫持]' if present else '[未劫持]'} {host}")
+
+    add("")
+    add("== 本地端口 ==")
+    for port in (80, 443):
+        sock = socket.socket()
+        sock.settimeout(1.5)
+        try:
+            listening = sock.connect_ex(("127.0.0.1", port)) == 0
+        except OSError:
+            listening = False
+        finally:
+            sock.close()
+        add(f"127.0.0.1:{port}: {'监听中' if listening else '未监听'}")
+
+    add("")
+    add("== 缓存与曲库 ==")
+    count, total, lib_count, lib_total, wd_count, wd_total = get_cache_stats()
+    add(f"临时缓存: {count} 个 | {total / 1048576:.1f} MB / {get_config()['max_cache_mb']} MB")
+    add(f"PyPyDance 曲库: {lib_count} 首 | {lib_total / 1048576:.1f} MB")
+    add(f"WannaDance 曲库: {wd_count} 首 | {wd_total / 1048576:.1f} MB")
+    session = get_session_stats()
+    add(f"本次会话: 本地命中 {session['hits']} 首 | 回源 {session['misses']} 首 | 节省流量 {session['saved_mb']:.1f} MB")
+
+    add("")
+    add("== 当前队列快照 ==")
+    queue = get_queue_snapshot()
+    if queue:
+        for item in queue:
+            add(f"[{item.get('state', '?')}] {item.get('name', '?')} (来源 {item.get('source', '?')})")
+    else:
+        add("（空）")
+
+    add("")
+    add("== 最近下载结果（最多 15 条） ==")
+    with _downloads_lock:
+        results = list(_download_results.values())[-15:]
+    if results:
+        for r in results:
+            status = "取消" if r.get("cancelled") else ("成功" if r.get("ok") else "失败")
+            line = f"{status} {r.get('filename', '?')} ({r.get('source', '?')}, {r.get('done', 0) / 1048576:.1f} MB)"
+            if r.get("error"):
+                line += f" 错误: {r['error']}"
+            add(line)
+    else:
+        add("（无）")
+    return "\n".join(out) + "\n"
 
 
 def main():

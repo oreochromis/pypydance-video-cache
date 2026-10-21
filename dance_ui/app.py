@@ -8,8 +8,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths, Qt, QTimer, Slot
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtCore import QStandardPaths, Qt, QTimer, Slot, QUrl
+from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QFileDialog, QHBoxLayout, QHeaderView,
     QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QScrollArea,
@@ -33,6 +33,21 @@ STATES = {
     "cooldown": ("放松视频", "warning"),
 }
 SOURCE_NAMES = {"cdn": "CDN", "youtube": "YouTube", "wannadance": "WannaDance", "external": "外部源"}
+
+
+def _version_newer(latest, current):
+    """语义化版本比较：latest 高于 current 返回 True。"""
+    def parts(value):
+        out = []
+        for piece in str(value).lstrip("vV").split("."):
+            digits = "".join(ch for ch in piece if ch.isdigit())
+            out.append(int(digits) if digits else 0)
+        return out
+    new, old = parts(latest), parts(current)
+    length = max(len(new), len(old))
+    new += [0] * (length - len(new))
+    old += [0] * (length - len(old))
+    return new > old
 
 
 class MainWindow(QMainWindow, Pages):
@@ -142,6 +157,7 @@ class MainWindow(QMainWindow, Pages):
         heading_box.addStretch()
         heading_box.addWidget(button("复制", self.copy_logs, link=True))
         heading_box.addWidget(button("导出", self.export_logs, link=True))
+        heading_box.addWidget(button("导出诊断", self.export_diagnostics, link=True))
         heading_box.addWidget(button("收起", self.toggle_logs, link=True))
         layout.addWidget(heading)
         self.logs = QPlainTextEdit()
@@ -156,6 +172,10 @@ class MainWindow(QMainWindow, Pages):
         footer_box = QHBoxLayout(footer)
         footer_box.setContentsMargins(26, 9, 26, 9)
         footer_box.addWidget(label("VRChat 跳舞房助手  ·  " + __version__, muted=True))
+        self.update_label = button("", self.open_release_page, link=True)
+        self.update_label.setToolTip("前往 GitHub Releases 下载新版本")
+        self.update_label.hide()
+        footer_box.addWidget(self.update_label)
         if self.controller.demo:
             footer_box.addWidget(status_label("演示数据 · 不启动服务", "warning"))
         footer_box.addStretch()
@@ -648,6 +668,40 @@ class MainWindow(QMainWindow, Pages):
         else:
             self.notify("运行日志已导出。")
 
+    def export_diagnostics(self):
+        if self.controller.demo:
+            self.notify("演示模式不采集本机诊断信息。")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "导出诊断信息", "vrchat-dance-diagnostics.txt", "文本文件 (*.txt)")
+        if not path:
+            return
+        self._diagnostics_path = path
+        self.notify("正在收集诊断信息…")
+        self.controller.collect_diagnostics()
+
+    def _write_diagnostics(self, text):
+        path = getattr(self, "_diagnostics_path", None)
+        self._diagnostics_path = None
+        if not path:
+            return
+        content = (f"VRChat 跳舞房助手 诊断信息\n版本: {__version__}\n\n" + text
+                   + "\n===== 运行日志 =====\n" + self.logs.toPlainText() + "\n")
+        try:
+            Path(path).write_text(content, encoding="utf-8")
+        except OSError as exc:
+            self.notify("导出失败：" + str(exc), error=True)
+        else:
+            self.notify("诊断信息已导出。反馈问题时请附上该文件。")
+
+    def open_release_page(self):
+        import dance_cache
+        QDesktopServices.openUrl(QUrl(dance_cache.UPDATE_CHECK_PAGE))
+
+    def render_session(self, data):
+        self.session_stats.setText(
+            f"本次会话：本地命中 {data.get('hits', 0)} 首 · 回源 {data.get('misses', 0)} 首"
+            f" · 节省流量 {bytes_text(data.get('saved_mb', 0) * 1024**2)}")
+
     def append_log(self, message):
         self.logs.appendPlainText(str(message))
 
@@ -729,6 +783,8 @@ class MainWindow(QMainWindow, Pages):
             self.render_queue()
         elif kind == "stats":
             self.render_stats(data)
+        elif kind == "session":
+            self.render_session(data)
         elif kind == "cooldown":
             self._cooldown.update(data)
             self.render_cooldown()
@@ -789,6 +845,13 @@ class MainWindow(QMainWindow, Pages):
                     self.append_log(str(error))
             self.notify(text, error=bool(result.get("failed_count")))
             self.controller.refresh_stats()
+        elif operation == "update_check":
+            if result and _version_newer(result, __version__):
+                self.update_label.setText(f"发现新版本 {result} · 点击查看")
+                self.update_label.show()
+                self.append_log(f"发现新版本 {result}（当前 {__version__}），可在 GitHub Releases 下载。")
+        elif operation == "diagnostics":
+            self._write_diagnostics(result)
         elif operation == "shutdown":
             self.controller.dispose()
             self._can_close = True
@@ -796,6 +859,8 @@ class MainWindow(QMainWindow, Pages):
 
     @Slot(str, str)
     def on_error(self, operation, message):
+        if operation == "update_check":
+            return  # 更新检查失败（无网络等）静默忽略
         self.notify(message, error=True)
         if operation == "steamvr_startup":
             self.steamvr_hint.setText(("保存失败，更改仍保留：" if self._steamvr_pending == "save" else "读取失败，无法确认当前状态：") + message)
@@ -898,7 +963,7 @@ def main(argv=None):
         if instance is None:
             return 0
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    app.setOrganizationName("Xiaoyu12-CPU")
+    app.setOrganizationName("Sharkspeare")
     app.setApplicationName("VRChatDanceAssistant")
     # 缩短浮窗弹出延迟（默认约 700ms，偏迟钝）
     try:
@@ -935,6 +1000,7 @@ def main(argv=None):
             QTimer.singleShot(250, smoke_check)
         if not args.demo and not args.no_autostart and os.name == "nt":
             QTimer.singleShot(200, controller.start)
+            QTimer.singleShot(3000, controller.check_updates)
         elif not args.demo and os.name != "nt":
             window.notify("缓存服务仅支持 Windows；当前环境可查看界面。使用 --demo 可以安全预览示例数据。", persistent=True)
         return app.exec()
