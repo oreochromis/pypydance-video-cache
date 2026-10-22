@@ -2466,6 +2466,7 @@ def _preload_download_loop():
 def _preload_worker_loop():
     """预载在独立线程执行：resolve_video_filename 要做网络请求并可能等待限流，
     若跑在日志监听线程上，限流期间队列刷新与 YouTube 直链捕获会一起停摆。"""
+    global _preload_pending
     while not _stop_event.is_set():
         _preload_wake.wait(1.0)
         _preload_wake.clear()

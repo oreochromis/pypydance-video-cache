@@ -660,6 +660,29 @@ class CoreTests(unittest.TestCase):
             self.dc.mark_mapping(2, "two.mp4")
             self.assertEqual(len(submitted), 1)
 
+    def test_preload_worker_loop_consumes_pending(self):
+        # 回归：worker 曾漏写 global _preload_pending，一取任务就 UnboundLocalError 猝死
+        done = threading.Event()
+        processed = []
+
+        def fake_submit(items):
+            processed.append(items)
+            done.set()
+
+        with mock.patch.object(self.dc, "submit_preload", side_effect=fake_submit):
+            self.dc._stop_event.clear()
+            t = threading.Thread(target=self.dc._preload_worker_loop, daemon=True)
+            t.start()
+            self.dc.submit_preload_async([{"songNum": 1, "videoName": "a"}])
+            try:
+                self.assertTrue(done.wait(5))
+            finally:
+                self.dc._stop_event.set()
+                t.join(timeout=5)
+                self.dc._stop_event.clear()
+        self.assertEqual(processed[0][0]["songNum"], 1)
+        self.assertIsNone(self.dc._preload_pending)
+
     def test_start_can_run_cdn_with_youtube_and_watcher_unavailable(self):
         with self.service_environment(api=False) as (server, factory, resolver, hijack, restore):
             self.assertIsNone(self.dc.start_services())
