@@ -104,8 +104,10 @@ _runtime_state = {
     "queue_watcher_available": False, "hosts_restore_pending": False,
     "warnings": [], "error": None,
 }
-_resolved_ids = {}           # songNum -> filename or None
+_resolved_ids = {}           # songNum -> filename or None（已确认的结果，会话内有效）
+_resolve_retry_at = {}       # songNum -> 允许再次解析的时间戳（无结果答复的退避）
 _resolved_lock = threading.Lock()
+RESOLVE_RETRY_DELAY = 180    # 得到答复但没拿到文件名时，隔多久允许重试一次
 _mapping = {}                # song_id -> filename（"" 表示非CDN源）
 _reverse_mapping = {}        # filename -> song_id
 _mapping_lock = threading.Lock()
@@ -1113,7 +1115,9 @@ def _api_conn():
 def resolve_video_filename(song_num):
     """api.pypy.dance/video?id=N -> 302 -> 提取 CDN 文件名；YouTube 源返回 None。
     429/网络错误会退避重试；失败时不写入映射（避免把限流误判成非CDN源）。
-    旧版本标记的 ""（非CDN源）会重新解析一次，以便学习 YouTube 源地址。"""
+    旧版本标记的 ""（非CDN源）会重新解析一次，以便学习 YouTube 源地址。
+    得到答复但没拿到文件名（临时异常/意外状态码）时不永久缓存：记录退避时间，
+    过 RESOLVE_RETRY_DELAY 秒允许重试，避免一次故障把这首歌卡死在"待解析"。"""
     with _resolved_lock:
         if song_num in _resolved_ids:
             return _resolved_ids[song_num]
@@ -1124,6 +1128,9 @@ def resolve_video_filename(song_num):
         with _resolved_lock:
             _resolved_ids[song_num] = fn
         return fn
+    with _resolved_lock:
+        if time.time() < _resolve_retry_at.get(song_num, 0.0):
+            return None
     filename = None
     answered = False
     retries = 4
@@ -1170,9 +1177,13 @@ def resolve_video_filename(song_num):
             log(f"解析视频地址 id={song_num} 返回 HTTP {status}")
         break
     if answered:
-        # 得到明确答复就缓存结果（含 None），本会话内不再重复探测同一首
+        # 拿到文件名的结果本会话内不再重复探测；没拿到文件名的答复
+        # 可能是临时故障，退避一段时间后允许重试
         with _resolved_lock:
-            _resolved_ids[song_num] = filename
+            if filename is not None:
+                _resolved_ids[song_num] = filename
+            else:
+                _resolve_retry_at[song_num] = time.time() + RESOLVE_RETRY_DELAY
     return filename
 
 
@@ -2448,6 +2459,31 @@ def submit_preload_async(items):
     _preload_wake.set()
 
 
+def _preload_retry_loop():
+    """队列长时间不变时定期补一枪：前几首里仍有未解析/未缓存的歌曲就重新提交预载。
+    解析失败本身有 RESOLVE_RETRY_DELAY 退避，这个循环只提供重试机会，不会轰炸 API。"""
+    while not _stop_event.wait(45):
+        with _queue_lock:
+            items = list(_last_queue_items)
+        if not items:
+            continue
+        count = int(_config["preload_count"]) + 1
+        needs_retry = False
+        for it in items[:count]:
+            if not isinstance(it, dict) or it.get("wd"):
+                continue
+            sn = it.get("songNum", 0)
+            if not (isinstance(sn, int) and not isinstance(sn, bool) and sn > 0):
+                continue
+            if in_library(sn) or yt_local_path(sn):
+                continue
+            if song_route(sn)[0] is None:
+                needs_retry = True
+                break
+        if needs_retry:
+            submit_preload_async(items)
+
+
 # ---------------- Cool Down（切歌时把下一首替换为放松视频，一次性） ----------------
 
 _cooldown_armed = False      # 待命状态
@@ -2748,6 +2784,7 @@ def start_services():
                 _watcher.start()
                 _spawn_service_thread(_preload_worker_loop)
                 _spawn_service_thread(_preload_download_loop)
+                _spawn_service_thread(_preload_retry_loop)
             else:
                 warnings.append("未找到 VRChat 日志目录，当前仅提供被动缓存")
             _running = True

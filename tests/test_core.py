@@ -611,6 +611,38 @@ class CoreTests(unittest.TestCase):
         self.assertEqual((done["done"], done["failed"]), (1, 0))
         self.assertFalse(done["cancelled"])
 
+    def test_resolve_answer_without_filename_retries_after_backoff(self):
+        # 解析得到答复但没拿到文件名（临时异常）时，不能永久缓存 None 把歌卡死在"待解析"：
+        # 退避期内不重试，退避过期后允许重新解析
+        spec = importlib.util.spec_from_file_location(
+            "dc_resolve_retry", Path(__file__).resolve().parents[1] / "dance_cache.py"
+        )
+        dc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(dc)
+        calls = []
+
+        class FakeAPI:
+            def request(self, method, path, headers=None):
+                calls.append(path)
+
+            def getresponse(self):
+                status = 200 if len(calls) == 1 else 302
+                resp = FakeResponse(status=status)
+                if status == 302:
+                    resp.headers["Location"] = "http://cdn.pypy.dance/abc123.mp4"
+                return resp
+
+        dc._api_conns.conn = FakeAPI()
+        self.assertIsNone(dc.resolve_video_filename(4539))
+        self.assertIsNone(dc.resolve_video_filename(4539))  # 退避期内不重试
+        self.assertEqual(len(calls), 1)
+        dc._resolve_retry_at[4539] = 0.0  # 退避过期
+        self.assertEqual(dc.resolve_video_filename(4539), "abc123.mp4")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(dc.resolve_video_filename(4539), "abc123.mp4")  # 成功结果会话内缓存
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(dc.song_route(4539), ("cdn", "abc123.mp4"))
+
     def test_start_can_run_cdn_with_youtube_and_watcher_unavailable(self):
         with self.service_environment(api=False) as (server, factory, resolver, hijack, restore):
             self.assertIsNone(self.dc.start_services())
