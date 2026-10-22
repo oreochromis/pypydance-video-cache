@@ -143,7 +143,7 @@ jobs:
   publish-release:
     needs: windows-x64
     if: >-
-      github.repository == 'Xiaoyu12-CPU/pypydance-video-cache' &&
+      github.repository == 'oreochromis/pypydance-video-cache' &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
       contains(github.event.head_commit.message, '[publish-release]')

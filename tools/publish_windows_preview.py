@@ -14,6 +14,7 @@ import sys
 from zipfile import ZipFile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from dance_ui import __version__
 from dance_ui.exe_icon import describe_embedded_icon
 from dance_ui.windows_taskbar import APPLICATION_ID
 from dance_ui.release_resources import (
@@ -23,9 +24,10 @@ from dance_ui.release_resources import (
 )
 
 
-REPOSITORY = "Xiaoyu12-CPU/pypydance-video-cache"
-TAG = "v3.0.1"
-TITLE = "VRChat 跳舞房助手 3.0.1（Windows 正式版）"
+REPOSITORY = "oreochromis/pypydance-video-cache"
+# 版本号与代码保持同步，升版本只需改 dance_ui/__init__.py 一处
+TAG = f"v{__version__}"
+TITLE = f"VRChat 跳舞房助手 {__version__}（Windows 正式版）"
 PUBLISH_MARKER = "[publish-release]"
 REQUIRED_SMOKE_CHECKS = {
     "demo_mode", "builtin_light_theme", "pillow_generated_background",

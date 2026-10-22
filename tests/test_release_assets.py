@@ -444,7 +444,7 @@ class ReleaseAssetTests(unittest.TestCase):
 
     def test_rejects_an_unauthorized_repository_before_reading_or_publishing(self):
         with patch.object(sys, "argv", ["publish_windows_preview.py"]), patch.dict(
-            os.environ, {"GITHUB_REPOSITORY": "oreochromis/pypydance-video-cache"}, clear=True,
+            os.environ, {"GITHUB_REPOSITORY": "someone-else/pypydance-video-cache"}, clear=True,
         ), patch.object(publisher, "verify_assets") as verify, patch.object(publisher, "gh") as gh:
             with self.assertRaisesRegex(SystemExit, "authorized Fork"):
                 publisher.main()
