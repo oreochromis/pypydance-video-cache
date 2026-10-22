@@ -27,6 +27,7 @@ import sys
 import threading
 import tempfile
 import time
+import traceback
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -182,6 +183,27 @@ def emit(kind, **data):
 
 def log(msg):
     emit("log", msg=msg)
+
+
+_default_thread_excepthook = threading.excepthook
+
+
+def _thread_excepthook(args):
+    # 后台线程未捕获异常默认只打到 stderr，GUI 下用户看不到；转进运行日志，
+    # “预载线程静默消失”这类故障才能被发现。
+    try:
+        name = args.thread.name if args.thread is not None else "?"
+        tb = "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
+        log(f"后台线程 {name} 异常退出:\n{tb.strip()}")
+    except Exception:
+        pass
+    try:
+        _default_thread_excepthook(args)
+    except Exception:
+        pass
+
+
+threading.excepthook = _thread_excepthook
 
 
 # ---------------- 会话统计（本地命中/回源/节省流量，按文件去重） ----------------
@@ -1137,6 +1159,7 @@ def resolve_video_filename(song_num):
     with _resolved_lock:
         if time.time() < _resolve_retry_at.get(song_num, 0.0):
             return None
+    log(f"解析视频地址 id={song_num}...")
     filename = None
     answered = False
     retries = 4
@@ -2620,18 +2643,26 @@ def cooldown_check(filename, consume=True):
 
 class LogWatcher(threading.Thread):
     def __init__(self):
-        super().__init__(daemon=True)
+        super().__init__(daemon=True, name="log_watcher")
         self.current_file = None
         self.offset = 0
         self.buf = ""
 
     def run(self):
         log("日志监听已启动，等待 VRChat 日志...")
+        last_check = 0.0
         while not _stop_event.is_set():
             try:
                 self._tick()
             except Exception as e:
                 log(f"日志监听出错: {e}")
+            now = time.monotonic()
+            if now - last_check > 30:
+                last_check = now
+                try:
+                    _ensure_service_threads()
+                except Exception as e:
+                    log(f"服务线程巡检出错: {e}")
             _stop_event.wait(1.0)
 
     def _tick(self):
@@ -2698,10 +2729,29 @@ class _StartCancelled(Exception):
 
 
 def _spawn_service_thread(target, args=()):
-    thread = threading.Thread(target=target, args=args, daemon=True)
+    thread = threading.Thread(target=target, args=args, daemon=True,
+                              name=getattr(target, "__name__", "service"))
     _service_threads.append(thread)
     thread.start()
     return thread
+
+
+def _ensure_service_threads():
+    """预载/落盘线程异常退出时自动重启；异常本身已由 threading.excepthook 记入日志。
+    由日志监听线程定期调用（它的 run 循环捕获一切异常，是全进程最难死的线程）。"""
+    if _stop_event.is_set() or not _running:
+        return
+    restartable = {
+        "_preload_worker_loop": _preload_worker_loop,
+        "_preload_download_loop": _preload_download_loop,
+        "_preload_retry_loop": _preload_retry_loop,
+        "_mapping_flush_loop": _mapping_flush_loop,
+    }
+    alive = {t.name for t in list(_service_threads) if t.is_alive()}
+    for name, target in restartable.items():
+        if name not in alive and not _stop_event.is_set():
+            log(f"检测到后台线程 {name} 未运行，自动重启")
+            _spawn_service_thread(target)
 
 
 def start_services():
@@ -2945,6 +2995,11 @@ def collect_diagnostics():
             add(f"{key}: {state[key]}")
     for warning in state.get("warnings") or []:
         add(f"警告: {warning}")
+
+    add("")
+    add("== 服务线程 ==")
+    for t in list(_service_threads):
+        add(f"{t.name}: {'存活' if t.is_alive() else '已退出'}")
 
     add("")
     add("== 配置 ==")
