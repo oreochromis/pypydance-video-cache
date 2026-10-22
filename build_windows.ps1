@@ -27,6 +27,23 @@ function Invoke-ProjectPython {
     }
 }
 
+function Invoke-ProjectPythonCode {
+    # Windows PowerShell 5.1 向原生进程传参会吃掉内嵌双引号，-c 内嵌代码改走临时 .py 文件；
+    # 脚本方式下 sys.path[0] 是临时目录而非项目根，用 PYTHONPATH 补回项目根（等价于 -c 的行为）
+    param([string]$Code, [string[]]$ExtraArgs = @())
+    $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("dance-build-" + [guid]::NewGuid().ToString("N") + ".py")
+    [System.IO.File]::WriteAllText($tempFile, $Code, (New-Object System.Text.UTF8Encoding($false)))
+    $oldPythonPath = $env:PYTHONPATH
+    $env:PYTHONPATH = $projectRoot
+    try {
+        Invoke-ProjectPython -Arguments (@($tempFile) + $ExtraArgs)
+    }
+    finally {
+        $env:PYTHONPATH = $oldPythonPath
+        Remove-Item -LiteralPath $tempFile -ErrorAction SilentlyContinue
+    }
+}
+
 Push-Location $projectRoot
 try {
     $runtimeCheck = @'
@@ -41,7 +58,7 @@ if sys.version_info < (3, 10):
 print("Build interpreter:", sys.executable)
 print("Python:", sys.version.split()[0])
 '@
-    Invoke-ProjectPython -Arguments @("-c", $runtimeCheck)
+    Invoke-ProjectPythonCode -Code $runtimeCheck
 
     if ($InstallDependencies) {
         Invoke-ProjectPython -Arguments @("-m", "pip", "install", "-r", "requirements-dev.txt")
@@ -60,7 +77,7 @@ print("Approved application icons:", describe_app_icons())
 for name in ("PySide6-Essentials", "Pillow", "PyInstaller", "openvr"):
     print(f"{name}: {metadata.version(name)}")
 '@
-    Invoke-ProjectPython -Arguments @("-c", $dependencyCheck)
+    Invoke-ProjectPythonCode -Code $dependencyCheck
 
     Invoke-ProjectPython -Arguments @(
         "-m", "PyInstaller",
@@ -115,7 +132,7 @@ for package in ("PySide6-Essentials", "shiboken6", "Pillow", "PyInstaller", "ope
         copied += 1
     print(f"{package}: copied {copied} available license/notice files")
 '@
-    Invoke-ProjectPython -Arguments @("-c", $licenseCollector, $bundleRoot)
+    Invoke-ProjectPythonCode -Code $licenseCollector -ExtraArgs @($bundleRoot)
 
     Write-Host ""
     Write-Host "Bundle created: $bundleRoot"
