@@ -59,7 +59,6 @@ def main() -> int:
         raise SystemExit("The bundle root must be named VRChat跳舞房助手.")
     required = (
         "VRChat跳舞房助手.exe",
-        "_internal/python312.dll",
         "README.md",
         "LICENSE",
         "docs/DEVELOPMENT.md",
@@ -73,6 +72,9 @@ def main() -> int:
     for relative in required:
         if not (bundle / relative).is_file():
             raise SystemExit(f"The Windows bundle is incomplete: missing {relative}")
+    # 运行库 DLL 随构建机的 Python 版本变化（python312.dll / python314.dll ...），按通配符检查
+    if not list((bundle / "_internal").glob("python3*.dll")):
+        raise SystemExit("The Windows bundle is incomplete: missing _internal/python3XX.dll")
     if not (bundle / "THIRD_PARTY_LICENSES").is_dir():
         raise SystemExit("The Windows bundle is missing third-party license materials.")
     if any("presets" in tuple(part.casefold() for part in path.relative_to(bundle).parts)
