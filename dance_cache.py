@@ -107,7 +107,7 @@ _runtime_state = {
 _resolved_ids = {}           # songNum -> filename or None（已确认的结果，会话内有效）
 _resolve_retry_at = {}       # songNum -> 允许再次解析的时间戳（无结果答复的退避）
 _resolved_lock = threading.Lock()
-RESOLVE_RETRY_DELAY = 180    # 得到答复但没拿到文件名时，隔多久允许重试一次
+RESOLVE_RETRY_DELAY = 60     # 得到答复但没拿到文件名时，隔多久允许重试一次
 _mapping = {}                # song_id -> filename（"" 表示非CDN源）
 _reverse_mapping = {}        # filename -> song_id
 _mapping_lock = threading.Lock()
@@ -483,12 +483,18 @@ _mapping_refresh_last = 0.0
 
 
 def _refresh_queue_for_mapping():
-    """学到新映射后刷新队列状态（节流 1s：重建映射会批量调用，逐次刷新会卡 UI）"""
+    """学到新映射后刷新队列状态（节流 1s：重建映射会批量调用，逐次刷新会卡 UI）；
+    并补投一次预载，让刚解析出的歌立刻开始下载，不必干等下一条队列日志。"""
     global _mapping_refresh_last
     now = time.time()
     if now - _mapping_refresh_last >= 1.0:
         _mapping_refresh_last = now
         refresh_queue_state()
+        if _running and not _stop_event.is_set():
+            with _queue_lock:
+                items = list(_last_queue_items)
+            if items:
+                submit_preload_async(items)
 
 
 def mark_mapping(song_id, filename):

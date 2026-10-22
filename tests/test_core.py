@@ -643,6 +643,23 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(dc.song_route(4539), ("cdn", "abc123.mp4"))
 
+    def test_learning_new_mapping_retriggers_preload_while_running(self):
+        # 通过播放透传等途径学到新映射时立即补投预载，不必等下一条队列日志才下载
+        submitted = []
+        self.dc._running = True
+        with self.dc._queue_lock:
+            self.dc._last_queue_items = [{"songNum": 1, "videoName": "a", "playerName": "p"}]
+        with mock.patch.object(self.dc, "submit_preload_async",
+                               side_effect=lambda items: submitted.append(items)):
+            self.dc._mapping_refresh_last = 0.0
+            self.dc.mark_mapping(1, "one.mp4")
+            self.assertEqual(len(submitted), 1)
+            # 未运行时（如重建映射的批量学习）不补投
+            self.dc._running = False
+            self.dc._mapping_refresh_last = 0.0
+            self.dc.mark_mapping(2, "two.mp4")
+            self.assertEqual(len(submitted), 1)
+
     def test_start_can_run_cdn_with_youtube_and_watcher_unavailable(self):
         with self.service_environment(api=False) as (server, factory, resolver, hijack, restore):
             self.assertIsNone(self.dc.start_services())
