@@ -86,6 +86,10 @@ class MainWindow(QMainWindow, Pages):
         if QApplication.platformName() not in ("offscreen", "minimal") and self.screen():
             available = self.screen().availableGeometry()
             self.resize(min(1100, max(850, available.width() - 60)), min(920, max(680, available.height() - 60)))
+            # 显式居中：Windows 偶尔会按记忆中的位置把窗口摆到（已拔除的）副屏区域外
+            geo = self.geometry()
+            self.move(available.x() + max(0, (available.width() - geo.width()) // 2),
+                      available.y() + max(0, (available.height() - geo.height()) // 2))
 
         self.backdrop = Backdrop()
         self.setCentralWidget(self.backdrop)
