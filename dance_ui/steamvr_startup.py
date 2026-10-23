@@ -81,10 +81,20 @@ def applications():
     with _runtime_lock:
         initialized = False
         try:
-            # Background explicitly does not start SteamVR if it isn't running.
-            # Avoid openvr.init(): it also asks for IVRSystem, which is unneeded.
-            openvr.initInternal2(openvr.VRApplication_Background, None)
-            initialized = True
+            try:
+                # Background explicitly does not start SteamVR if it isn't running.
+                # Avoid openvr.init(): it also asks for IVRSystem, which is unneeded.
+                openvr.initInternal2(openvr.VRApplication_Background, None)
+                initialized = True
+            except Exception:
+                # VR 面板页（实验）持有长生命周期 overlay 会话时无法再 init Background，
+                # 复用它的会话查询启动设置
+                from . import vr_overlay
+                api = vr_overlay.active_applications()
+                if api is None:
+                    raise
+                yield api
+                return
             yield openvr.IVRApplications()
         except Exception as exc:
             raise RuntimeError(f"无法访问 SteamVR 启动设置，请先启动 SteamVR 后重试：{exc}") from exc

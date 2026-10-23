@@ -62,7 +62,7 @@ QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation) / appearanc
 
 ### 跟随 SteamVR 启动
 
-Windows 使用 `openvr==2.12.1401` 的公开应用接口；依赖只在 Windows 安装。通过 `VRApplication_Background` 短连接查询或注册，读取设置不会主动启动 SteamVR，因此首次设置和刷新时需先运行 SteamVR。固定应用标识为 `xiaoyu12cpu.pypydancecache`，manifest 放在本机状态目录下的 `steamvr/pypydance.vrmanifest`，不分发用户注册文件。
+Windows 使用 `openvr==2.12.1401` 的公开应用接口；依赖只在 Windows 安装。通过 `VRApplication_Background` 短连接查询或注册，读取设置不会主动启动 SteamVR，因此首次设置和刷新时需先运行 SteamVR。固定应用标识为 `sharkspeare.vrchatdanceassistant`，manifest 放在本机状态目录下的 `steamvr/vrchatdance.vrmanifest`，不分发用户注册文件。
 
 `AddApplicationManifest` 使用非临时注册，`SetApplicationAutoLaunch` 写入 SteamVR，回读确认后界面才报告成功；不在业务 config 中另存一个可能过时的开关。关闭只取消本应用的自动启动标志。注册失败尝试恢复原 manifest 和自动启动标志，恢复失败明确提示刷新检查。
 
@@ -71,6 +71,10 @@ SteamVR 的自动启动接口要求 manifest 标记 `is_dashboard_overlay=true`�
 “启动”卡片独立应用，不提交其他设置草稿；读取失败显示未知状态，保存失败保留草稿。SteamVR 关闭不退出助手。移动/升级到其他程序目录后，请先关闭该选项并应用，再重新启用以刷新启动路径。实际 SteamVR 启动、中文路径和 UAC 点击仍需在用户 Windows 机器验收。
 
 API 依据：[Valve OpenVR 接口定义](https://github.com/ValveSoftware/openvr/blob/0924064316de3effbcd1acf1e309182a2deb1c05/headers/openvr.h)、[pyopenvr 固定版本](https://github.com/cmbruns/pyopenvr/tree/2.12.1401)。
+
+### SteamVR 面板页（实验性）
+
+`dance_ui/vr_overlay.py` 以 `VRApplication_Overlay` 长连接注册 dashboard overlay（`sharkspeare.vrchatdanceassistant.panel`），出现在 SteamVR 菜单中。纹理用 Pillow 绘制后经 `SetOverlayRaw` 提交 RGBA 字节，不依赖 OpenGL 上下文；缩略图用 `SetOverlayFromFile` 指向 `assets/app-icon.png`。输入走 `VROverlayInputMethod_Mouse`，控制器激光映射为鼠标事件（坐标 0-1，y 原点在下），按钮命中测试在渲染坐标系完成，动作经 Qt 信号排队回 GUI 线程。SteamVR 未运行时 15 秒间隔静默重试，断连自动重连；overlay 会话存活期间“跟随 SteamVR 启动”的短连接复用同一会话。面板内容 1 秒刷新一次。实际显示效果与激光交互只能在 VR 环境验收。
 
 ### 常用 CDN 收藏
 

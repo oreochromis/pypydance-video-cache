@@ -134,6 +134,11 @@ class Pages:
             "仅在 Windows 生效。设置时请先启动 SteamVR，再应用启动设置。启动本程序时仍需确认管理员授权；移动程序位置后请重新启用。关闭 SteamVR 不会关闭本程序。",
             muted=True, wrap=True,
         ))
+        self.vr_overlay = QCheckBox("SteamVR 面板页（实验性）")
+        self.vr_overlay.setToolTip("开启后在 SteamVR 菜单中显示「VRChat 跳舞房助手」页面：查看当前歌曲、队列与缓存状态，可用激光指针操作。需先启动 SteamVR。")
+        self.vr_overlay.toggled.connect(lambda: self.mark_dirty("settings"))
+        startup.box.addWidget(self.vr_overlay)
+        startup.box.addWidget(label("开启后应用设置即生效，无需重启服务。", muted=True, wrap=True))
         box.addWidget(startup)
         general = Card()
         general.box.addWidget(label("缓存行为", subheading=True))

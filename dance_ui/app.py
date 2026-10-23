@@ -79,6 +79,7 @@ class MainWindow(QMainWindow, Pages):
         self._update_prompted = False
         self._banner_generation = 0
         self._row_height = 48
+        self._vr_overlay = None  # load_fields 会先于服务创建调用 _sync_vr_overlay
         self.setWindowTitle("VRChat 跳舞房助手" + (" · 界面演示" if controller.demo else ""))
         self.setWindowIcon(app_icon())
         self.resize(1100, 920)
@@ -129,6 +130,12 @@ class MainWindow(QMainWindow, Pages):
         self.render_queue()
         self.render_downloads()
         QTimer.singleShot(0, self.refresh_steamvr_startup)
+        # SteamVR 面板页（实验）：仅真机 Windows 启用；跟随配置热启停
+        if os.name == "nt" and not controller.demo:
+            from . import vr_overlay
+            self._vr_overlay = vr_overlay.VROverlayService()
+            self._vr_overlay.bridge.action_requested.connect(self._on_vr_action)
+            QTimer.singleShot(0, self._sync_vr_overlay)
 
     def build_header(self, outer):
         header = QWidget()
@@ -408,6 +415,7 @@ class MainWindow(QMainWindow, Pages):
                 self.cooldown_path.setText(config["cooldown_file"])
                 self.preferred_ip.setText(config["preferred_cdn_ip"])
                 self.auto_prefer_cdn.setChecked(config.get("auto_prefer_cdn", True))
+                self.vr_overlay.setChecked(config.get("vr_overlay", False))
             for name in (section,) if section else ("storage", "settings"):
                 self._dirty[name] = False
                 self.apply_buttons[name].setEnabled(False)
@@ -415,6 +423,20 @@ class MainWindow(QMainWindow, Pages):
         finally:
             self._syncing = False
         self.render_cooldown()
+        self._sync_vr_overlay()
+
+    def _sync_vr_overlay(self):
+        """按当前配置启停 SteamVR 面板页（应用设置后热生效）"""
+        if self._vr_overlay is None:
+            return
+        if self.controller.config().get("vr_overlay"):
+            self._vr_overlay.start()
+        else:
+            self._vr_overlay.stop()
+
+    def _on_vr_action(self, action):
+        if action == "toggle_service" and not self._closing:
+            self.toggle_service()
 
     def mark_dirty(self, section):
         if self._syncing:
@@ -432,6 +454,7 @@ class MainWindow(QMainWindow, Pages):
         else:
             patch = {"preload_count": self.preload_count.value(), "preload_sequential": self.preload_sequential.isChecked(),
                      "enable_youtube_cache": self.youtube_enabled.isChecked(), "bundle_direct": self.bundle_direct.isChecked(),
+                     "vr_overlay": self.vr_overlay.isChecked(),
                      "cooldown_file": self.cooldown_path.text().strip(), "preferred_cdn_ip": self.preferred_ip.text().strip(),
                      "auto_prefer_cdn": self.auto_prefer_cdn.isChecked()}
         self.controller.apply_config(patch, section)
@@ -1008,6 +1031,8 @@ class MainWindow(QMainWindow, Pages):
         ) != QMessageBox.StandardButton.Yes:
             return
         self._closing = True
+        if self._vr_overlay is not None:
+            self._vr_overlay.stop()
         self.notify("正在停止服务并退出…", persistent=True)
         self.setEnabled(False)
         self.controller.shutdown()
