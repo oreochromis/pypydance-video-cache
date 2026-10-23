@@ -19,6 +19,7 @@ PANEL_NAME = "VRChat 跳舞房助手"
 TEXTURE_W, TEXTURE_H = 1024, 640
 WIDTH_METERS = 1.5
 RENDER_INTERVAL = 1.0   # 状态纹理刷新间隔（秒）
+CURSOR_RENDER_INTERVAL = 1 / 30   # 光标移动触发的重绘限频（30fps）
 RETRY_INTERVAL = 15.0   # SteamVR 未运行时的重连间隔（秒）
 
 _session_lock = threading.Lock()
@@ -189,9 +190,9 @@ def render_panel(state):
 
 
 def hit_test(x_norm, y_norm):
-    """overlay 鼠标事件坐标（0-1，y 原点在下）换算成像素后命中按钮动作 id"""
+    """overlay 鼠标事件坐标（0-1，y 原点在上，与纹理像素方向一致）换算成像素后命中按钮动作 id"""
     px = x_norm * TEXTURE_W
-    py = (1.0 - y_norm) * TEXTURE_H
+    py = y_norm * TEXTURE_H
     for action, (x0, y0, x1, y1) in _button_rects().items():
         if x0 <= px <= x1 and y0 <= py <= y1:
             return action, px, py
@@ -338,15 +339,20 @@ class VROverlayService:
             self.logger("VR 面板已注册：打开 SteamVR 菜单即可看到「VRChat 跳舞房助手」页面")
             event = openvr.VREvent_t()
             last_render = 0.0
+            last_cursor = None
             while not self._stop.is_set():
                 self._poll_events(openvr, overlay, handle, event)
                 now = time.time()
-                if now - last_render >= RENDER_INTERVAL:
+                # 状态 1 秒一刷；光标移动时即时重绘（限 30fps），否则激光指针拖影严重
+                cursor_changed = self._cursor != last_cursor
+                if (now - last_render >= RENDER_INTERVAL
+                        or (cursor_changed and now - last_render >= CURSOR_RENDER_INTERVAL)):
                     last_render = now
+                    last_cursor = self._cursor
                     state = self.state_provider(clicks=self._clicks, cursor=self._cursor)
                     pixels = render_panel(state)
                     overlay.setOverlayRaw(handle, _as_pixel_buffer(pixels), TEXTURE_W, TEXTURE_H, 4)
-                self._stop.wait(0.05)
+                self._stop.wait(0.02)
             # 停止前清掉光标再渲染一次不必要；退出时销毁 overlay
         finally:
             if handle is not None:
@@ -371,7 +377,7 @@ class VROverlayService:
             etype = event.eventType
             mouse = getattr(event.data, "mouse", None)
             if etype == getattr(openvr, "VREvent_MouseMove", 300) and mouse is not None:
-                self._cursor = (mouse.x * TEXTURE_W, (1.0 - mouse.y) * TEXTURE_H)
+                self._cursor = (mouse.x * TEXTURE_W, mouse.y * TEXTURE_H)
             elif etype == getattr(openvr, "VREvent_MouseButtonDown", 301) and mouse is not None:
                 if getattr(mouse, "button", None) != getattr(openvr, "VRMouseButton_Left", 1):
                     continue
