@@ -43,7 +43,10 @@ class FakeOverlayAPI:
         self.thumbnail_file = path
 
     def setOverlayRaw(self, handle, buffer, width, height, bpp):
-        self.raw_submissions.append((width, height, bpp, len(buffer)))
+        # 回归：pyopenvr 对 buffer 取 byref()，传 bytes 会指到对象头导致 SteamVR 读到全零透明；
+        # 必须是 ctypes 数组，且首像素应为背景色 (24,27,36,255)
+        head = bytes(buffer[:4]) if not isinstance(buffer, bytes) else buffer[:4]
+        self.raw_submissions.append((width, height, bpp, len(buffer), type(buffer).__name__, bytes(head)))
 
     def pollNextOverlayEvent(self, handle, event):
         if not self.events:
@@ -125,9 +128,11 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(api.created, (vr_overlay.PANEL_KEY, vr_overlay.PANEL_NAME))
         self.assertEqual(api.input_method, 1)
         self.assertTrue(api.thumbnail_file.endswith("app-icon.png"))
-        w, h, bpp, length = api.raw_submissions[0]
+        w, h, bpp, length, buf_type, head = api.raw_submissions[0]
         self.assertEqual((w, h, bpp), (1024, 640, 4))
         self.assertEqual(length, 1024 * 640 * 4)
+        self.assertNotEqual(buf_type, "bytes")  # bytes 会被 byref 指到对象头，overlay 全透明
+        self.assertEqual(head, bytes((24, 27, 36, 255)))  # 首像素 = 背景色，证明指针指向真实像素
         self.assertEqual(sorted(api.destroyed), [101, 102])
         module.shutdown.assert_called()
         self.assertFalse(service.running())

@@ -198,6 +198,14 @@ def hit_test(x_norm, y_norm):
     return None, px, py
 
 
+def _as_pixel_buffer(data):
+    """pyopenvr 的 setOverlayRaw 对 buffer 参数取 byref()，直接传 bytes 会把指针
+    指到 Python 对象头而不是像素数据（SteamVR 读到全零 = 全透明）。
+    必须先复制进 ctypes 数组，byref 才能指向真实像素。"""
+    import ctypes
+    return (ctypes.c_char * len(data)).from_buffer_copy(data)
+
+
 def collect_state(clicks=0, cursor=None):
     """从缓存核心采集面板数据；核心不可用时给出占位状态"""
     import dance_cache as core
@@ -336,7 +344,8 @@ class VROverlayService:
                 if now - last_render >= RENDER_INTERVAL:
                     last_render = now
                     state = self.state_provider(clicks=self._clicks, cursor=self._cursor)
-                    overlay.setOverlayRaw(handle, render_panel(state), TEXTURE_W, TEXTURE_H, 4)
+                    pixels = render_panel(state)
+                    overlay.setOverlayRaw(handle, _as_pixel_buffer(pixels), TEXTURE_W, TEXTURE_H, 4)
                 self._stop.wait(0.05)
             # 停止前清掉光标再渲染一次不必要；退出时销毁 overlay
         finally:
