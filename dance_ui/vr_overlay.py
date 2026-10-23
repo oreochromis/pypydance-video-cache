@@ -19,7 +19,6 @@ PANEL_NAME = "VRChat 跳舞房助手"
 TEXTURE_W, TEXTURE_H = 1024, 640
 WIDTH_METERS = 1.5
 RENDER_INTERVAL = 1.0   # 状态纹理刷新间隔（秒）
-CURSOR_RENDER_INTERVAL = 1 / 30   # 光标移动触发的重绘限频（30fps）
 RETRY_INTERVAL = 15.0   # SteamVR 未运行时的重连间隔（秒）
 
 _session_lock = threading.Lock()
@@ -84,7 +83,7 @@ def _button_rects():
 def render_panel(state):
     """把状态画成 RGBA 字节。state 键：
     running, current{name, meta}, queue[{index, name, state}], stats{hits, misses, saved_mb},
-    downloading[0..1]{name, percent}, clicks, cursor(x, y 或 None), message
+    downloading[0..1]{name, percent}, clicks, hover(悬停按钮 action id 或 None), message
     """
     from PIL import Image, ImageDraw
 
@@ -162,13 +161,7 @@ def render_panel(state):
 
     # 按钮
     rects = _button_rects()
-    cursor = state.get("cursor")
-    hover = None
-    if cursor:
-        px, py = cursor
-        for action, (x0, y0, x1, y1) in rects.items():
-            if x0 <= px <= x1 and y0 <= py <= y1:
-                hover = action
+    hover = state.get("hover")
     for action, rect in rects.items():
         x0, y0, x1, y1 = rect
         fill = (98, 116, 255, 255) if hover == action else (62, 68, 90, 255)
@@ -181,18 +174,13 @@ def render_panel(state):
         lw = draw.textlength(label, font=font)
         draw.text(((x0 + x1 - lw) / 2, (y0 + y1) / 2 - 13), label, font=font, fill=(238, 240, 247, 255))
 
-    # 激光光标
-    if cursor:
-        px, py = cursor
-        draw.ellipse((px - 9, py - 9, px + 9, py + 9), fill=(255, 96, 96, 230),
-                     outline=(255, 255, 255, 255), width=2)
     return img.tobytes()
 
 
 def hit_test(x_norm, y_norm):
-    """overlay 鼠标事件坐标（0-1，y 原点在上，与纹理像素方向一致）换算成像素后命中按钮动作 id"""
+    """overlay 鼠标事件坐标（0-1，y 原点在下）换算成像素后命中按钮动作 id"""
     px = x_norm * TEXTURE_W
-    py = y_norm * TEXTURE_H
+    py = (1.0 - y_norm) * TEXTURE_H
     for action, (x0, y0, x1, y1) in _button_rects().items():
         if x0 <= px <= x1 and y0 <= py <= y1:
             return action, px, py
@@ -207,12 +195,12 @@ def _as_pixel_buffer(data):
     return (ctypes.c_char * len(data)).from_buffer_copy(data)
 
 
-def collect_state(clicks=0, cursor=None):
+def collect_state(clicks=0):
     """从缓存核心采集面板数据；核心不可用时给出占位状态"""
     import dance_cache as core
 
     state = {"running": False, "current": None, "queue": [], "stats": {},
-             "downloading": [], "clicks": clicks, "cursor": cursor,
+             "downloading": [], "clicks": clicks,
              "service_label": "启动服务", "message": None}
     try:
         runtime = core.get_runtime_state()
@@ -266,7 +254,7 @@ class VROverlayService:
         self._stop = threading.Event()
         self._thread = None
         self._clicks = 0
-        self._cursor = None
+        self._hover = None   # 当前激光悬停的按钮 action id
 
     @staticmethod
     def _default_logger(message):
@@ -339,21 +327,24 @@ class VROverlayService:
             self.logger("VR 面板已注册：打开 SteamVR 菜单即可看到「VRChat 跳舞房助手」页面")
             event = openvr.VREvent_t()
             last_render = 0.0
-            last_cursor = None
+            last_hover = None
+            last_clicks = -1
             while not self._stop.is_set():
                 self._poll_events(openvr, overlay, handle, event)
                 now = time.time()
-                # 状态 1 秒一刷；光标移动时即时重绘（限 30fps），否则激光指针拖影严重
-                cursor_changed = self._cursor != last_cursor
-                if (now - last_render >= RENDER_INTERVAL
-                        or (cursor_changed and now - last_render >= CURSOR_RENDER_INTERVAL)):
+                # 状态 1 秒一刷；悬停按钮或点击计数变化时立即重绘一次。
+                # 不做光标跟随式高频重绘：Pillow 软件渲染 + 整纹理上传做不到流畅
+                # 跟随，强行高频只会又卡又闪；激光落点由 SteamVR 自己的光点指示
+                interactive = self._hover != last_hover or self._clicks != last_clicks
+                if now - last_render >= RENDER_INTERVAL or interactive:
                     last_render = now
-                    last_cursor = self._cursor
-                    state = self.state_provider(clicks=self._clicks, cursor=self._cursor)
+                    last_hover, last_clicks = self._hover, self._clicks
+                    state = self.state_provider(clicks=self._clicks)
+                    state["hover"] = self._hover
                     pixels = render_panel(state)
                     overlay.setOverlayRaw(handle, _as_pixel_buffer(pixels), TEXTURE_W, TEXTURE_H, 4)
-                self._stop.wait(0.02)
-            # 停止前清掉光标再渲染一次不必要；退出时销毁 overlay
+                self._stop.wait(0.05)
+            # 退出时销毁 overlay
         finally:
             if handle is not None:
                 try:
@@ -377,12 +368,12 @@ class VROverlayService:
             etype = event.eventType
             mouse = getattr(event.data, "mouse", None)
             if etype == getattr(openvr, "VREvent_MouseMove", 300) and mouse is not None:
-                self._cursor = (mouse.x * TEXTURE_W, mouse.y * TEXTURE_H)
+                self._hover = hit_test(mouse.x, mouse.y)[0]
             elif etype == getattr(openvr, "VREvent_MouseButtonDown", 301) and mouse is not None:
                 if getattr(mouse, "button", None) != getattr(openvr, "VRMouseButton_Left", 1):
                     continue
-                action, px, py = hit_test(mouse.x, mouse.y)
-                self._cursor = (px, py)
+                action, _, _ = hit_test(mouse.x, mouse.y)
+                self._hover = action
                 if action == "test_click":
                     self._clicks += 1
                     self.logger(f"VR 面板激光点击测试成功（第 {self._clicks} 次）")

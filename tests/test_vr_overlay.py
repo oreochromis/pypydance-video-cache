@@ -83,7 +83,7 @@ def sample_state(**kw):
                       {"index": 2, "name": "下下一首", "state": "未缓存", "cached": False}],
             "stats": {"hits": 3, "misses": 1, "saved_mb": 128.0},
             "downloading": [{"name": "abc.mp4", "percent": 0.42}],
-            "clicks": kw.get("clicks", 0), "cursor": kw.get("cursor"), "message": None}
+            "clicks": kw.get("clicks", 0), "hover": kw.get("hover"), "message": None}
 
 
 class RenderTests(unittest.TestCase):
@@ -93,14 +93,14 @@ class RenderTests(unittest.TestCase):
 
     def test_render_panel_handles_empty_state_and_long_titles(self):
         data = vr_overlay.render_panel({"current": {"name": "超长" * 200, "state": "已缓存", "meta": "x" * 500},
-                                        "queue": [], "stats": {}, "clicks": 0, "cursor": (10, 10)})
+                                        "queue": [], "stats": {}, "clicks": 0, "hover": "test_click"})
         self.assertEqual(len(data), vr_overlay.TEXTURE_W * vr_overlay.TEXTURE_H * 4)
 
-    def test_hit_test_uses_top_origin_y_coordinates(self):
+    def test_hit_test_uses_bottom_origin_y_coordinates(self):
         # toggle_service 按钮 rect: (40, H-88, 300, H-32)；激光命中点像素 (100, H-60)
-        # OpenVR overlay 鼠标坐标 y 原点在上，与纹理像素同向，无需翻转
+        # OpenVR overlay 鼠标坐标 y 原点在下，需翻转到纹理像素坐标
         x_norm = 100 / vr_overlay.TEXTURE_W
-        y_norm = (vr_overlay.TEXTURE_H - 60) / vr_overlay.TEXTURE_H
+        y_norm = 1.0 - (vr_overlay.TEXTURE_H - 60) / vr_overlay.TEXTURE_H
         action, px, py = vr_overlay.hit_test(x_norm, y_norm)
         self.assertEqual(action, "toggle_service")
         self.assertAlmostEqual(px, 100)
@@ -140,11 +140,11 @@ class ServiceTests(unittest.TestCase):
         module.shutdown.assert_called()
         self.assertFalse(service.running())
 
-    def test_laser_events_update_cursor_and_fire_actions(self):
+    def test_laser_events_update_hover_and_fire_actions(self):
         # 激光移到测试按钮中心（像素 (TEXTURE_W-170, H-60)）并按下左键
         bx, by = vr_overlay.TEXTURE_W - 170, vr_overlay.TEXTURE_H - 60
-        move = (300, (bx / vr_overlay.TEXTURE_W, by / vr_overlay.TEXTURE_H, 1))
-        click = (301, (bx / vr_overlay.TEXTURE_W, by / vr_overlay.TEXTURE_H, 1))
+        move = (300, (bx / vr_overlay.TEXTURE_W, 1 - by / vr_overlay.TEXTURE_H, 1))
+        click = (301, (bx / vr_overlay.TEXTURE_W, 1 - by / vr_overlay.TEXTURE_H, 1))
         api = FakeOverlayAPI(events=[move, click])
         service, bridge, logs = self.make_service(api)
         with patch.dict("sys.modules", {"openvr": fake_openvr(api)}):
@@ -154,12 +154,13 @@ class ServiceTests(unittest.TestCase):
                 time.sleep(0.02)
             service.stop()
         self.assertEqual(service._clicks, 1)
+        self.assertEqual(service._hover, "test_click")
         self.assertTrue(any("激光点击测试" in message for message in logs))
 
     def test_toggle_service_button_emits_bridge_action(self):
         x0, y0, x1, y1 = vr_overlay._button_rects()["toggle_service"]
         px, py = (x0 + x1) / 2, (y0 + y1) / 2
-        click = (301, (px / vr_overlay.TEXTURE_W, py / vr_overlay.TEXTURE_H, 1))
+        click = (301, (px / vr_overlay.TEXTURE_W, 1 - py / vr_overlay.TEXTURE_H, 1))
         api = FakeOverlayAPI(events=[click])
         service, bridge, logs = self.make_service(api)
         with patch.dict("sys.modules", {"openvr": fake_openvr(api)}):
