@@ -435,8 +435,12 @@ class MainWindow(QMainWindow, Pages):
             self._vr_overlay.stop()
 
     def _on_vr_action(self, action):
-        if action == "toggle_service" and not self._closing:
+        if self._closing:
+            return
+        if action == "toggle_service":
             self.toggle_service()
+        elif action == "cooldown":
+            self.toggle_cooldown()
 
     def mark_dirty(self, section):
         if self._syncing:

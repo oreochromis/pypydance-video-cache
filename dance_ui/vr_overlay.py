@@ -1,8 +1,8 @@
 """SteamVR 仪表盘 overlay（实验性）：在 SteamVR 菜单里显示助手页面。
 
-骨架目标：出现在 SteamVR 菜单（dashboard overlay + 缩略图）、显示当前歌曲与缓存状态、
-接收控制器激光的鼠标事件（一个真实按钮 + 一个测试按钮验证命中）。
-纹理用 setOverlayRaw 直接提交 RGBA 字节，不依赖 OpenGL 上下文。
+出现在 SteamVR 菜单（dashboard overlay + 缩略图）、显示当前歌曲与缓存状态、
+接收控制器激光的鼠标事件（启停服务 + CoolDown 两个按钮）。
+纹理优先用常驻 OpenGL 纹理原地更新（不闪烁），GL 不可用时回退 setOverlayRaw。
 SteamVR 未运行时按 15 秒间隔静默重试连接；运行中 SteamVR 退出会自动回到重试。"""
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def _clip(draw, text, font, max_width):
 def _button_rects():
     return {
         "toggle_service": (40, TEXTURE_H - 88, 300, TEXTURE_H - 32),
-        "test_click": (TEXTURE_W - 300, TEXTURE_H - 88, TEXTURE_W - 40, TEXTURE_H - 32),
+        "cooldown": (TEXTURE_W - 300, TEXTURE_H - 88, TEXTURE_W - 40, TEXTURE_H - 32),
     }
 
 
@@ -169,7 +169,13 @@ def render_panel(state):
         if action == "toggle_service":
             label = state.get("service_label") or "启动/停止服务"
         else:
-            label = f"激光点击测试（{state.get('clicks', 0)} 次）"
+            cooldown = state.get("cooldown") or {}
+            if not cooldown.get("available"):
+                label = "CoolDown（未设放松视频）"
+            elif cooldown.get("phase") == "idle":
+                label = "启用 CoolDown"
+            else:
+                label = "取消 CoolDown"
         font = body_font
         lw = draw.textlength(label, font=font)
         draw.text(((x0 + x1 - lw) / 2, (y0 + y1) / 2 - 13), label, font=font, fill=(238, 240, 247, 255))
@@ -274,12 +280,12 @@ class _GLTextureUploader:
             pass
 
 
-def collect_state(clicks=0):
+def collect_state():
     """从缓存核心采集面板数据；核心不可用时给出占位状态"""
     import dance_cache as core
 
     state = {"running": False, "current": None, "queue": [], "stats": {},
-             "downloading": [], "clicks": clicks,
+             "downloading": [], "cooldown": {"phase": "idle", "available": False},
              "service_label": "启动服务", "message": None}
     try:
         runtime = core.get_runtime_state()
@@ -308,6 +314,10 @@ def collect_state(clicks=0):
     except Exception:
         pass
     try:
+        state["cooldown"] = core.get_cooldown_state()
+    except Exception:
+        pass
+    try:
         active = [d for d in core.get_downloads_snapshot() if (d.get("total") or 0) > 0]
         state["downloading"] = [
             {"name": d.get("filename"), "percent": d["done"] / d["total"]} for d in active[:1]
@@ -333,8 +343,8 @@ class VROverlayService:
         self._gl_upload = gl_upload
         self._stop = threading.Event()
         self._thread = None
-        self._clicks = 0
         self._hover = None   # 当前激光悬停的按钮 action id
+        self._force_render = False   # 按钮动作后强制下一帧立即重绘，让标签即时刷新
 
     @staticmethod
     def _default_logger(message):
@@ -414,19 +424,19 @@ class VROverlayService:
             event = openvr.VREvent_t()
             last_render = 0.0
             last_hover = None
-            last_clicks = -1
             last_pixels = None
             while not self._stop.is_set():
                 self._poll_events(openvr, overlay, handle, event, y_origin_top=uploader is not None)
                 now = time.time()
-                # 状态 1 秒一刷；悬停按钮或点击计数变化时立即重绘一次。
+                # 状态 1 秒一刷；悬停按钮变化或按钮动作后立即重绘一次。
                 # 不做光标跟随式高频重绘：软件渲染做不到流畅跟随；
                 # 激光落点由 SteamVR 自己的光点指示
-                interactive = self._hover != last_hover or self._clicks != last_clicks
+                interactive = self._hover != last_hover or self._force_render
                 if now - last_render >= RENDER_INTERVAL or interactive:
                     last_render = now
-                    last_hover, last_clicks = self._hover, self._clicks
-                    state = self.state_provider(clicks=self._clicks)
+                    last_hover = self._hover
+                    self._force_render = False
+                    state = self.state_provider()
                     state["hover"] = self._hover
                     pixels = render_panel(state)
                     # 像素没变就跳过上传，空闲时完全不打扰合成器
@@ -473,9 +483,7 @@ class VROverlayService:
                 self.logger(f"VR 点击: 原始 ({mouse.x:.4f}, {mouse.y:.4f}) "
                             f"cursor={getattr(mouse, 'cursorIndex', '?')} "
                             f"-> 像素 ({px:.0f}, {py:.0f}) -> 命中 {action or '空白'}")
-                if action == "test_click":
-                    self._clicks += 1
-                    self.logger(f"VR 面板激光点击测试成功（第 {self._clicks} 次）")
-                elif action:
+                if action:
+                    self._force_render = True
                     self.logger(f"VR 面板触发操作: {action}")
                     self.bridge.action_requested.emit(action)

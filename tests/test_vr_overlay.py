@@ -83,7 +83,8 @@ def sample_state(**kw):
                       {"index": 2, "name": "下下一首", "state": "未缓存", "cached": False}],
             "stats": {"hits": 3, "misses": 1, "saved_mb": 128.0},
             "downloading": [{"name": "abc.mp4", "percent": 0.42}],
-            "clicks": kw.get("clicks", 0), "hover": kw.get("hover"), "message": None}
+            "cooldown": kw.get("cooldown", {"phase": "idle", "available": True}),
+            "hover": kw.get("hover"), "message": None}
 
 
 class RenderTests(unittest.TestCase):
@@ -93,7 +94,8 @@ class RenderTests(unittest.TestCase):
 
     def test_render_panel_handles_empty_state_and_long_titles(self):
         data = vr_overlay.render_panel({"current": {"name": "超长" * 200, "state": "已缓存", "meta": "x" * 500},
-                                        "queue": [], "stats": {}, "clicks": 0, "hover": "test_click"})
+                                        "queue": [], "stats": {}, "hover": "cooldown",
+                                        "cooldown": {"phase": "armed", "available": True}})
         self.assertEqual(len(data), vr_overlay.TEXTURE_W * vr_overlay.TEXTURE_H * 4)
 
     def test_hit_test_matches_calibrated_coordinate_mapping(self):
@@ -151,7 +153,7 @@ class ServiceTests(unittest.TestCase):
         self.assertFalse(service.running())
 
     def test_laser_events_update_hover_and_fire_actions(self):
-        # 激光移到测试按钮中心（像素 (TEXTURE_W-170, H-60)）并按下左键
+        # 激光移到 CoolDown 按钮中心（像素 (TEXTURE_W-170, H-60)）并按下左键
         def to_norm(bx, by):
             return (bx / vr_overlay.TEXTURE_W,
                     1.0 - vr_overlay.Y_MARGIN - by / vr_overlay.TEXTURE_W, 1)
@@ -163,12 +165,12 @@ class ServiceTests(unittest.TestCase):
         with patch.dict("sys.modules", {"openvr": fake_openvr(api)}):
             service.start()
             deadline = time.time() + 5
-            while service._clicks == 0 and time.time() < deadline:
+            while not bridge.action_requested.emit.called and time.time() < deadline:
                 time.sleep(0.02)
             service.stop()
-        self.assertEqual(service._clicks, 1)
-        self.assertEqual(service._hover, "test_click")
-        self.assertTrue(any("激光点击测试" in message for message in logs))
+        bridge.action_requested.emit.assert_called_once_with("cooldown")
+        self.assertEqual(service._hover, "cooldown")
+        self.assertTrue(any("触发操作" in message for message in logs))
 
     def test_toggle_service_button_emits_bridge_action(self):
         x0, y0, x1, y1 = vr_overlay._button_rects()["toggle_service"]
