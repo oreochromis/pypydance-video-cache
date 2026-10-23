@@ -83,6 +83,7 @@ DEFAULT_CONFIG = {
     "cdn_permanent": False,
     "wd_permanent": True,
     "cooldown_file": "",
+    "bundle_direct": True,
 }
 
 _config = {}
@@ -334,7 +335,7 @@ def _validated_config(config, *, allow_shared_storage=False):
         value = cfg.get(name)
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
             raise ValueError(f"{name} 必须是大于等于 {minimum} 的整数")
-    for name in ("enable_youtube_cache", "youtube_permanent", "cdn_permanent", "wd_permanent", "preload_sequential", "auto_prefer_cdn"):
+    for name in ("enable_youtube_cache", "youtube_permanent", "cdn_permanent", "wd_permanent", "preload_sequential", "auto_prefer_cdn", "bundle_direct"):
         if not isinstance(cfg.get(name), bool):
             raise ValueError(f"{name} 必须是布尔值")
     for name in ("cache_dir", "library_dir", "wd_library_dir", "preferred_cdn_ip", "cooldown_file"):
@@ -499,6 +500,7 @@ def load_mapping():
         message = f"mapping.json 读取失败: {e}"
         log(message)
         emit("warning", message=message)
+    load_bundle_cache()
 
 
 _mapping_refresh_last = 0.0
@@ -550,6 +552,144 @@ def flush_mapping():
 def _mapping_flush_loop():
     while not _stop_event.wait(3):
         flush_mapping()
+
+
+# ---------------- 歌单直取（bundle：id -> YouTube ID -> CDN 文件名） ----------------
+
+BUNDLE_PATH = os.path.join(SCRIPT_DIR, "bundle_songs.json")
+YT_ID_RE = re.compile(r"(?:v=|youtu\.be/)([\w-]{11})")
+
+_bundle_ytid = {}            # song_id -> YouTube ID（官方歌单里 4821/4850 首可用）
+_bundle_lock = threading.Lock()
+_bundle_miss = set()         # 已确认 CDN 上无对应文件的歌曲（会话内有效）
+_bundle_retry_at = {}        # 探测网络错误的退避时间戳
+
+
+def _extract_ytid(urls):
+    for u in urls:
+        m = YT_ID_RE.search(u or "")
+        if m:
+            return m.group(1)
+    return None
+
+
+def _load_bundle_data(data):
+    """从 bundle JSON 建 id -> ytid 表，返回条数。已验证 CDN 文件名 == ytid + .mp4。"""
+    table = {}
+    for song in data.get("songs") or []:
+        sid = song.get("i")
+        urls = song.get("o") or []
+        if isinstance(sid, int):
+            ytid = _extract_ytid(urls if isinstance(urls, list) else [urls])
+            if ytid:
+                table[sid] = ytid
+    if table:
+        with _bundle_lock:
+            _bundle_ytid.clear()
+            _bundle_ytid.update(table)
+    return len(table)
+
+
+def load_bundle_cache():
+    """启动时先读本地缓存的歌单（不等网络，歌单变化由 fetch_bundle 在线更新）"""
+    try:
+        with open(BUNDLE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return
+    except Exception as e:
+        log(f"bundle_songs.json 读取失败: {e}")
+        return
+    n = _load_bundle_data(data)
+    if n:
+        log(f"已加载本地歌单直取表 {n} 条")
+
+
+def fetch_bundle():
+    """从 api.pypy.dance/bundle 拉取官方歌单，更新 id->ytid 直取表并持久化。
+    失败保留旧表（含本地缓存），解析自然回退逐首 API 跳转。"""
+    if not _origin_ips.get(API_HOST):
+        return
+    try:
+        status, _, body = api_request("/bundle")
+    except Exception as e:
+        log(f"歌单直取表拉取失败: {e}")
+        return
+    if status != 200:
+        log(f"歌单直取表拉取失败: HTTP {status}")
+        return
+    try:
+        data = json.loads(body.decode("utf-8", "replace"))
+    except Exception as e:
+        log(f"歌单直取表解析失败: {e}")
+        return
+    n = _load_bundle_data(data)
+    if not n:
+        log("歌单直取表为空，保留旧数据")
+        return
+    log(f"歌单直取表已更新：{n} 首")
+    try:
+        with open(BUNDLE_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception as e:
+        log(f"bundle_songs.json 保存失败: {e}")
+
+
+def _bundle_probe(song_num):
+    """歌单直取：用歌单里的 ytid 拼 CDN 文件名，Range 探测确认存在后写入映射。
+    返回文件名或 None（未开启/歌单没有/不存在/探测失败都回退原解析路径）。"""
+    if not _config.get("bundle_direct", True):
+        return None
+    if song_num in _bundle_miss:
+        return None
+    with _bundle_lock:
+        ytid = _bundle_ytid.get(song_num)
+    if not ytid or time.time() < _bundle_retry_at.get(song_num, 0.0):
+        return None
+    filename = ytid + ".mp4"
+    conn = None
+    try:
+        conn, resp = _open_upstream_once("cdn.pypy.dance", "/" + filename,
+                                         extra_headers={"Range": "bytes=0-0"})
+        status = resp.status
+        resp.read()
+    except Exception as e:
+        _bundle_retry_at[song_num] = time.time() + 300
+        log(f"歌单直取探测失败 id={song_num}: {e}，回退 API 解析")
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    if status in (200, 206):
+        mark_mapping(song_num, filename)
+        with _resolved_lock:
+            _resolved_ids[song_num] = filename
+        log(f"歌单直取命中 id={song_num} -> {filename}")
+        return filename
+    if status == 404:
+        _bundle_miss.add(song_num)
+        log(f"歌单直取无此文件 id={song_num}，回退 API 解析")
+    else:
+        log(f"歌单直取探测 id={song_num} 返回 HTTP {status}，回退 API 解析")
+    return None
+
+
+def invalidate_mapping(song_id, filename):
+    """下载 404 说明映射已失效：清除映射与会话缓存，并记住这首歌 CDN 无此文件"""
+    global _mapping_dirty
+    with _mapping_lock:
+        if _mapping.get(song_id) != filename:
+            return
+        del _mapping[song_id]
+        _reverse_mapping.pop(filename, None)
+        _mapping_dirty = True
+    with _resolved_lock:
+        _resolved_ids.pop(song_id, None)
+    _bundle_miss.add(song_id)
+    log(f"id={song_id} 的文件 {filename} 在 CDN 已不存在，已清除映射，将回退 API 解析")
 
 
 # ---------------- 曲库 ----------------
@@ -998,12 +1138,18 @@ def ordered_ips(host):
     """cdn.pypy.dance / play.udon.dance 优先使用用户设置的优选 IP（同为 Cloudflare，一个 IP 两家通用），
     失效时自动回落到默认解析结果。
     注意实际下载会被 301 到带哈希的子域名（如 806bb815.cdn.pypy.dance），优选 IP 必须对子域名同样生效，
-    否则真实下载永远走系统 DNS 分配的节点，优选形同虚设。"""
+    否则真实下载永远走系统 DNS 分配的节点，优选形同虚设。
+    子域名（韩国源站直连，通常只有一个 IP）额外附上主域名的 Cloudflare 节点做兜底：
+    源站限流(429)/故障时自动改用 CF 节点访问子域名（HTTP 下 CF 可为子域服务）。"""
     ips = list(_origin_ips.get(host, []))
     pref = (_config.get("preferred_cdn_ip") or "").strip()
     is_cdn = host == UDON_PLAY_HOST or host == "cdn.pypy.dance" or host.endswith(".cdn.pypy.dance")
     if pref and _is_public_ip(pref) and is_cdn:
         ips = [pref] + [ip for ip in ips if ip != pref]
+    if host.endswith(".cdn.pypy.dance"):
+        for ip in _origin_ips.get("cdn.pypy.dance", []):
+            if ip not in ips:
+                ips.append(ip)
     return ips
 
 
@@ -1145,7 +1291,16 @@ def resolve_video_filename(song_num):
     429/网络错误会退避重试；失败时不写入映射（避免把限流误判成非CDN源）。
     旧版本标记的 ""（非CDN源）会重新解析一次，以便学习 YouTube 源地址。
     得到答复但没拿到文件名（临时异常/意外状态码）时不永久缓存：记录退避时间，
-    过 RESOLVE_RETRY_DELAY 秒允许重试，避免一次故障把这首歌卡死在"待解析"。"""
+    过 RESOLVE_RETRY_DELAY 秒允许重试，避免一次故障把这首歌卡死在"待解析"。
+    歌单直取开启时，无映射或已知 YouTube 源的歌曲先尝试用歌单 ytid 直取 CDN
+    （yt 源在 CDN 常有同名文件，命中即升级为本地缓存，并绕过 API 跳转与限流）。"""
+    if _config.get("bundle_direct", True):
+        with _mapping_lock:
+            v0 = _mapping.get(song_num)
+        if not v0 or v0.startswith("yt:"):
+            fn = _bundle_probe(song_num)
+            if fn:
+                return fn
     with _resolved_lock:
         if song_num in _resolved_ids:
             return _resolved_ids[song_num]
@@ -1337,6 +1492,8 @@ def download_file(filename, song_id=None):
     try:
         conn, resp = open_upstream("cdn.pypy.dance", "/" + filename)
         if resp.status != 200:
+            if resp.status == 404 and meta["song_id"] is not None:
+                invalidate_mapping(meta["song_id"], filename)
             raise RuntimeError(f"HTTP {resp.status}")
         total = int(resp.getheader("Content-Length") or 0)
         with open(part, "wb") as f:
@@ -2846,6 +3003,8 @@ def start_services():
                 warnings.append("未找到 VRChat 日志目录，当前仅提供被动缓存")
             _running = True
             _reset_session_stats()
+            if _config.get("bundle_direct", True):
+                _spawn_service_thread(fetch_bundle)  # 一次性任务，不在自愈重启列表里
             if _config.get("auto_prefer_cdn", True):
                 _spawn_service_thread(auto_speedtest_apply)
             _set_runtime_state(phase="running", running=True, youtube_available=yt_mode,

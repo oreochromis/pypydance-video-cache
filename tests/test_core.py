@@ -153,6 +153,7 @@ class CoreTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(self.dc, "_hosts_watchdog_loop", return_value=None))
             stack.enter_context(mock.patch.object(self.dc, "_mapping_flush_loop", return_value=None))
             stack.enter_context(mock.patch.object(self.dc, "_tunnel_loop", return_value=None))
+            stack.enter_context(mock.patch.object(self.dc, "fetch_bundle", return_value=None))
             try:
                 yield server, factory, resolver, hijack, restore
             finally:
@@ -271,11 +272,20 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(self.dc.ordered_ips("cdn.pypy.dance")[0], "172.66.157.15")
         # 实际下载会被 301 到带哈希的子域名，优选 IP 必须同样生效
         self.assertEqual(self.dc.ordered_ips("806bb815.cdn.pypy.dance")[0], "172.66.157.15")
-        # 未解析过的子域名也应返回优选 IP，而不是空列表导致无法下载
-        self.assertEqual(self.dc.ordered_ips("abcdef12.cdn.pypy.dance"), ["172.66.157.15"])
+        # 未解析过的子域名也应返回优选 IP（外加 CF 兜底），而不是空列表导致无法下载
+        self.assertEqual(self.dc.ordered_ips("abcdef12.cdn.pypy.dance"), ["172.66.157.15", "104.20.20.68"])
         # 非 CDN 域名不受影响
         self.dc._origin_ips["api.pypy.dance"] = ["1.2.3.4"]
         self.assertEqual(self.dc.ordered_ips("api.pypy.dance"), ["1.2.3.4"])
+
+    def test_subdomain_falls_back_to_cloudflare_ips_on_rate_limit(self):
+        # 韩国源站子域名通常只有一个直连 IP；被限流(429)时应自动改用 CF 节点访问子域名
+        self.dc._origin_ips["cdn.pypy.dance"] = ["104.20.20.68", "172.66.157.15"]
+        self.dc._origin_ips["806bb815.cdn.pypy.dance"] = ["59.16.201.126"]
+        self.assertEqual(self.dc.ordered_ips("806bb815.cdn.pypy.dance"),
+                         ["59.16.201.126", "104.20.20.68", "172.66.157.15"])
+        # 主域名自身不追加（直连源站未验证可服务主域名）
+        self.assertEqual(self.dc.ordered_ips("cdn.pypy.dance"), ["104.20.20.68", "172.66.157.15"])
 
     def test_clear_cache_protects_active_part_and_permanent_library(self):
         target = str(self.cache / "busy.mp4")
@@ -642,6 +652,153 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(dc.resolve_video_filename(4539), "abc123.mp4")  # 成功结果会话内缓存
         self.assertEqual(len(calls), 2)
         self.assertEqual(dc.song_route(4539), ("cdn", "abc123.mp4"))
+
+    # ---------------- 歌单直取（bundle_direct） ----------------
+
+    def _seed_bundle(self, table):
+        with self.dc._bundle_lock:
+            self.dc._bundle_ytid.clear()
+            self.dc._bundle_ytid.update(table)
+
+    def test_load_bundle_data_builds_ytid_table(self):
+        data = {"songs": [
+            {"i": 3528, "o": ["https://www.youtube.com/watch?v=IDMXoNj4xOU"]},
+            {"i": 7152, "o": ["https://youtu.be/abcdef12345"]},
+            {"i": 29, "o": ["https://example.com/not-youtube"]},
+            {"i": 30},
+        ]}
+        self.assertEqual(self.dc._load_bundle_data(data), 2)
+        self.assertEqual(self.dc._bundle_ytid, {3528: "IDMXoNj4xOU", 7152: "abcdef12345"})
+        # 空数据不清空旧表
+        self.assertEqual(self.dc._load_bundle_data({"songs": []}), 0)
+        self.assertEqual(self.dc._bundle_ytid[3528], "IDMXoNj4xOU")
+
+    def test_fetch_bundle_updates_table_and_persists(self):
+        self.dc._origin_ips[self.dc.API_HOST] = ["1.0.0.1"]
+        self.dc.BUNDLE_PATH = str(self.root / "bundle_songs.json")
+        payload = json.dumps({"songs": [{"i": 1, "o": ["https://youtu.be/abcdef12345"]}]}).encode()
+        with mock.patch.object(self.dc, "api_request", return_value=(200, {}, payload)):
+            self.dc.fetch_bundle()
+        self.assertEqual(self.dc._bundle_ytid, {1: "abcdef12345"})
+        self.assertTrue((self.root / "bundle_songs.json").exists())
+        # 拉取失败保留旧表
+        with mock.patch.object(self.dc, "api_request", side_effect=OSError("down")):
+            self.dc.fetch_bundle()
+        self.assertEqual(self.dc._bundle_ytid, {1: "abcdef12345"})
+
+    def test_load_bundle_cache_reads_persisted_table(self):
+        path = self.root / "bundle_songs.json"
+        path.write_text(json.dumps({"songs": [{"i": 7, "o": ["https://youtu.be/abcdef12345"]}]}), encoding="utf-8")
+        self.dc.BUNDLE_PATH = str(path)
+        self.dc.load_bundle_cache()
+        self.assertEqual(self.dc._bundle_ytid, {7: "abcdef12345"})
+
+    def test_bundle_probe_hit_marks_mapping_and_session_cache(self):
+        self._seed_bundle({3528: "IDMXoNj4xOU"})
+        conn = FakeConnection()
+        with mock.patch.object(self.dc, "_open_upstream_once",
+                               return_value=(conn, FakeResponse(status=206))) as upstream:
+            self.assertEqual(self.dc._bundle_probe(3528), "IDMXoNj4xOU.mp4")
+        self.assertEqual(upstream.call_args[0], ("cdn.pypy.dance", "/IDMXoNj4xOU.mp4"))
+        self.assertEqual(self.dc.song_route(3528), ("cdn", "IDMXoNj4xOU.mp4"))
+        self.assertEqual(self.dc._resolved_ids[3528], "IDMXoNj4xOU.mp4")
+        self.assertTrue(conn.closed)
+
+    def test_bundle_probe_404_falls_back_and_remembers(self):
+        self._seed_bundle({29: "missingvid1"})
+        with mock.patch.object(self.dc, "_open_upstream_once",
+                               return_value=(FakeConnection(), FakeResponse(status=404))):
+            self.assertIsNone(self.dc._bundle_probe(29))
+        self.assertIn(29, self.dc._bundle_miss)
+        self.assertEqual(self.dc.song_route(29), (None, None))
+        # 确认 miss 后不再重复探测
+        with mock.patch.object(self.dc, "_open_upstream_once", side_effect=AssertionError("不应重复探测")):
+            self.assertIsNone(self.dc._bundle_probe(29))
+
+    def test_bundle_probe_network_error_backs_off_without_poisoning(self):
+        self._seed_bundle({3528: "IDMXoNj4xOU"})
+        with mock.patch.object(self.dc, "_open_upstream_once", side_effect=OSError("reset")):
+            self.assertIsNone(self.dc._bundle_probe(3528))
+        self.assertGreater(self.dc._bundle_retry_at[3528], 0)
+        self.assertNotIn(3528, self.dc._bundle_miss)
+        with mock.patch.object(self.dc, "_open_upstream_once", side_effect=AssertionError("退避期内不应探测")):
+            self.assertIsNone(self.dc._bundle_probe(3528))
+
+    def test_bundle_probe_respects_toggle(self):
+        self._seed_bundle({3528: "IDMXoNj4xOU"})
+        self.dc._config["bundle_direct"] = False
+        with mock.patch.object(self.dc, "_open_upstream_once", side_effect=AssertionError("开关关闭不应探测")):
+            self.assertIsNone(self.dc._bundle_probe(3528))
+
+    def _fresh_module(self, bundle_direct=True):
+        """独立加载 dance_cache：setUp 的守卫把 resolve_video_filename 换成了 AssertionError，
+        需要真实 resolve 行为的用例用这个（与 test_resolve_answer_without_filename 同套路）"""
+        spec = importlib.util.spec_from_file_location(
+            "dc_bundle_test", Path(__file__).resolve().parents[1] / "dance_cache.py"
+        )
+        dc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(dc)
+        dc._config = {"bundle_direct": bundle_direct}
+        return dc
+
+    def test_resolve_prefers_bundle_direct_without_api(self):
+        dc = self._fresh_module()
+        dc._bundle_ytid.update({3528: "IDMXoNj4xOU"})
+        with mock.patch.object(dc, "_open_upstream_once",
+                               return_value=(FakeConnection(), FakeResponse(status=206))):
+            self.assertEqual(dc.resolve_video_filename(3528), "IDMXoNj4xOU.mp4")
+
+    def test_resolve_upgrades_youtube_mapping_via_bundle(self):
+        # 已知 YouTube 源的歌曲在 CDN 有同名文件时升级为本地缓存，不再走录流
+        dc = self._fresh_module()
+        dc._mapping[3811] = "yt:https://www.youtube.com/watch?v=jJoZJIJt0Fw"
+        dc._resolved_ids[3811] = None  # 本会话已按 YouTube 源解析过
+        dc._bundle_ytid.update({3811: "jJoZJIJt0Fw"})
+        with mock.patch.object(dc, "_open_upstream_once",
+                               return_value=(FakeConnection(), FakeResponse(status=206))):
+            self.assertEqual(dc.resolve_video_filename(3811), "jJoZJIJt0Fw.mp4")
+        self.assertEqual(dc.song_route(3811), ("cdn", "jJoZJIJt0Fw.mp4"))
+
+    def _fake_api_redirect(self, filename):
+        class FakeAPI:
+            def request(self, method, path, headers=None):
+                pass
+
+            def getresponse(self):
+                resp = FakeResponse(status=302)
+                resp.headers["Location"] = f"http://cdn.pypy.dance/{filename}"
+                return resp
+
+        return FakeAPI()
+
+    def test_resolve_bundle_404_falls_back_to_api(self):
+        dc = self._fresh_module()
+        dc._bundle_ytid.update({4539: "missingvid1"})
+        with mock.patch.object(dc, "_open_upstream_once",
+                               return_value=(FakeConnection(), FakeResponse(status=404))), \
+             mock.patch.object(dc, "_api_conn", return_value=self._fake_api_redirect("real-file.mp4")):
+            self.assertEqual(dc.resolve_video_filename(4539), "real-file.mp4")
+        self.assertIn(4539, dc._bundle_miss)
+        self.assertEqual(dc.song_route(4539), ("cdn", "real-file.mp4"))
+
+    def test_resolve_falls_back_to_api_when_toggle_off(self):
+        # 开关关闭时即使歌单有记录也走老的 API 跳转解析
+        dc = self._fresh_module(bundle_direct=False)
+        dc._bundle_ytid.update({4539: "IDMXoNj4xOU"})
+        with mock.patch.object(dc, "_open_upstream_once", side_effect=AssertionError("直取已关闭，不应探测")), \
+             mock.patch.object(dc, "_api_conn", return_value=self._fake_api_redirect("api-resolved.mp4")):
+            self.assertEqual(dc.resolve_video_filename(4539), "api-resolved.mp4")
+        self.assertEqual(dc.song_route(4539), ("cdn", "api-resolved.mp4"))
+
+    def test_download_404_invalidates_stale_bundle_mapping(self):
+        self.dc.mark_mapping(3528, "IDMXoNj4xOU.mp4")
+        self.dc._resolved_ids[3528] = "IDMXoNj4xOU.mp4"
+        with mock.patch.object(self.dc, "open_upstream",
+                               return_value=(FakeConnection(), FakeResponse(status=404))):
+            self.assertFalse(self.dc.download_file("IDMXoNj4xOU.mp4", 3528))
+        self.assertEqual(self.dc.song_route(3528), (None, None))
+        self.assertNotIn(3528, self.dc._resolved_ids)
+        self.assertIn(3528, self.dc._bundle_miss)
 
     def test_learning_new_mapping_retriggers_preload_while_running(self):
         # 通过播放透传等途径学到新映射时立即补投预载，不必等下一条队列日志才下载

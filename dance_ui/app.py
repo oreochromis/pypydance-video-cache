@@ -399,6 +399,7 @@ class MainWindow(QMainWindow, Pages):
                 self.preload_count.setMaximum(max(10, config["preload_count"]))
                 self.preload_count.setValue(config["preload_count"])
                 self.preload_sequential.setChecked(config.get("preload_sequential", True))
+                self.bundle_direct.setChecked(config.get("bundle_direct", True))
                 self.youtube_enabled.setChecked(config["enable_youtube_cache"])
                 self.cooldown_path.setText(config["cooldown_file"])
                 self.preferred_ip.setText(config["preferred_cdn_ip"])
@@ -426,7 +427,7 @@ class MainWindow(QMainWindow, Pages):
                      "youtube_permanent": self.youtube_permanent.isChecked()}
         else:
             patch = {"preload_count": self.preload_count.value(), "preload_sequential": self.preload_sequential.isChecked(),
-                     "enable_youtube_cache": self.youtube_enabled.isChecked(),
+                     "enable_youtube_cache": self.youtube_enabled.isChecked(), "bundle_direct": self.bundle_direct.isChecked(),
                      "cooldown_file": self.cooldown_path.text().strip(), "preferred_cdn_ip": self.preferred_ip.text().strip(),
                      "auto_prefer_cdn": self.auto_prefer_cdn.isChecked()}
         self.controller.apply_config(patch, section)
