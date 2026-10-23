@@ -345,6 +345,8 @@ class VROverlayService:
         self._thread = None
         self._hover = None   # 当前激光悬停的按钮 action id
         self._force_render = False   # 按钮动作后强制下一帧立即重绘，让标签即时刷新
+        self._visible = True   # OverlayShown/Hidden 驱动；默认可见保证首帧能渲染
+        self._notice = None   # (文本, 过期时间戳)，面板上的临时操作反馈
 
     @staticmethod
     def _default_logger(message):
@@ -369,6 +371,34 @@ class VROverlayService:
 
     def running(self):
         return self._thread is not None and self._thread.is_alive()
+
+    def _set_notice(self, text, duration=4.0):
+        """面板上显示一条临时反馈（操作结果/失败原因），到期自动消失"""
+        self._notice = (text, time.time() + duration)
+        self._force_render = True
+
+    def _current_notice(self):
+        if not self._notice:
+            return None
+        text, until = self._notice
+        if time.time() >= until:
+            self._notice = None
+            return None
+        return text
+
+    def _cooldown_ready(self):
+        """VR 端点 CoolDown 前预检，失败时给面板提示并拦下指令（桌面端只会写日志，VR 里看不见）"""
+        try:
+            import dance_cache as core
+            if not core.get_cooldown_state().get("available"):
+                self._set_notice("未设置放松视频，请在桌面端「设置」页选择")
+                return False
+            if not core.is_running():
+                self._set_notice("缓存服务未运行，请先启动服务")
+                return False
+        except Exception:
+            pass   # 核心不可用时不拦截，交给桌面端报错
+        return True
 
     # ---------------- 线程内部 ----------------
 
@@ -432,12 +462,14 @@ class VROverlayService:
                 # 不做光标跟随式高频重绘：软件渲染做不到流畅跟随；
                 # 激光落点由 SteamVR 自己的光点指示
                 interactive = self._hover != last_hover or self._force_render
-                if now - last_render >= RENDER_INTERVAL or interactive:
+                # 面板隐藏（SteamVR 菜单未打开）时跳过渲染与状态采集，省 CPU 和磁盘 stat
+                if self._visible and (now - last_render >= RENDER_INTERVAL or interactive):
                     last_render = now
                     last_hover = self._hover
                     self._force_render = False
                     state = self.state_provider()
                     state["hover"] = self._hover
+                    state["message"] = self._current_notice()
                     pixels = render_panel(state)
                     # 像素没变就跳过上传，空闲时完全不打扰合成器
                     if pixels != last_pixels:
@@ -472,7 +504,15 @@ class VROverlayService:
                 return
             etype = event.eventType
             mouse = getattr(event.data, "mouse", None)
-            if etype == getattr(openvr, "VREvent_MouseMove", 300) and mouse is not None:
+            if etype == getattr(openvr, "VREvent_FocusLeave", 304):
+                # 激光移出面板：清掉悬停高亮，否则会一直残留
+                self._hover = None
+            elif etype == getattr(openvr, "VREvent_OverlayShown", 500):
+                self._visible = True
+                self._force_render = True
+            elif etype == getattr(openvr, "VREvent_OverlayHidden", 501):
+                self._visible = False
+            elif etype == getattr(openvr, "VREvent_MouseMove", 300) and mouse is not None:
                 self._hover = hit_test(mouse.x, mouse.y, y_origin_top)[0]
             elif etype == getattr(openvr, "VREvent_MouseButtonDown", 301) and mouse is not None:
                 if getattr(mouse, "button", None) != getattr(openvr, "VRMouseButton_Left", 1):
@@ -484,6 +524,17 @@ class VROverlayService:
                             f"cursor={getattr(mouse, 'cursorIndex', '?')} "
                             f"-> 像素 ({px:.0f}, {py:.0f}) -> 命中 {action or '空白'}")
                 if action:
+                    if action == "cooldown":
+                        if not self._cooldown_ready():
+                            continue
+                        self._set_notice("CoolDown 状态已切换")
+                    elif action == "toggle_service":
+                        try:
+                            import dance_cache as core
+                            text = "正在停止服务…" if core.is_running() else "正在启动服务…"
+                        except Exception:
+                            text = "已发送启停指令"
+                        self._set_notice(text)
                     self._force_render = True
                     self.logger(f"VR 面板触发操作: {action}")
                     self.bridge.action_requested.emit(action)

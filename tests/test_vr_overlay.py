@@ -162,15 +162,82 @@ class ServiceTests(unittest.TestCase):
         click = (301, to_norm(bx, by))
         api = FakeOverlayAPI(events=[move, click])
         service, bridge, logs = self.make_service(api)
-        with patch.dict("sys.modules", {"openvr": fake_openvr(api)}):
-            service.start()
-            deadline = time.time() + 5
-            while not bridge.action_requested.emit.called and time.time() < deadline:
-                time.sleep(0.02)
-            service.stop()
+        # CoolDown 点击前有预检（未设放松视频/服务未运行会拦下），mock 核心为可武装状态
+        with patch("dance_cache.get_cooldown_state",
+                   return_value={"phase": "idle", "available": True}), \
+             patch("dance_cache.is_running", return_value=True):
+            with patch.dict("sys.modules", {"openvr": fake_openvr(api)}):
+                service.start()
+                deadline = time.time() + 5
+                while not bridge.action_requested.emit.called and time.time() < deadline:
+                    time.sleep(0.02)
+                service.stop()
         bridge.action_requested.emit.assert_called_once_with("cooldown")
         self.assertEqual(service._hover, "cooldown")
         self.assertTrue(any("触发操作" in message for message in logs))
+
+    def test_cooldown_blocked_with_notice_when_unavailable(self):
+        x0, y0, x1, y1 = vr_overlay._button_rects()["cooldown"]
+        px, py = (x0 + x1) / 2, (y0 + y1) / 2
+        click = (301, (px / vr_overlay.TEXTURE_W,
+                       1.0 - vr_overlay.Y_MARGIN - py / vr_overlay.TEXTURE_W, 1))
+        api = FakeOverlayAPI(events=[click])
+        service, bridge, logs = self.make_service(api)
+        with patch("dance_cache.get_cooldown_state",
+                   return_value={"phase": "idle", "available": False}), \
+             patch("dance_cache.is_running", return_value=True):
+            with patch.dict("sys.modules", {"openvr": fake_openvr(api)}):
+                service.start()
+                deadline = time.time() + 5
+                while service._current_notice() is None and time.time() < deadline:
+                    time.sleep(0.02)
+                service.stop()
+        bridge.action_requested.emit.assert_not_called()  # 未设放松视频时指令被拦下
+        self.assertIn("放松视频", service._current_notice())
+
+    def test_focus_leave_clears_hover_highlight(self):
+        def to_norm(bx, by):
+            return (bx / vr_overlay.TEXTURE_W,
+                    1.0 - vr_overlay.Y_MARGIN - by / vr_overlay.TEXTURE_W, 1)
+        bx, by = vr_overlay.TEXTURE_W - 170, vr_overlay.TEXTURE_H - 60
+        api = FakeOverlayAPI(events=[(300, to_norm(bx, by)), (304, None)])  # 指上按钮后激光移出
+        service, bridge, logs = self.make_service(api)
+        with patch.dict("sys.modules", {"openvr": fake_openvr(api)}):
+            service.start()
+            time.sleep(0.4)
+            service.stop()
+        self.assertIsNone(service._hover)  # 高亮不残留
+
+    def test_hidden_pauses_rendering_and_shown_resumes(self):
+        api = FakeOverlayAPI()
+        renders = []
+        bridge = types.SimpleNamespace(action_requested=types.SimpleNamespace(emit=MagicMock()))
+
+        def provider(**kw):
+            renders.append(1)
+            return sample_state(**kw)
+
+        # 用渲染计数而不是上传计数判定：隐藏恢复后内容未变时上传会被去重跳过，但渲染必须恢复
+        service = vr_overlay.VROverlayService(bridge=bridge, state_provider=provider,
+                                              logger=lambda m: None, gl_upload=False)
+        with patch.dict("sys.modules", {"openvr": fake_openvr(api)}):
+            service.start()
+            deadline = time.time() + 5
+            while not renders and time.time() < deadline:
+                time.sleep(0.02)
+            api.events.append((501, None))  # OverlayHidden
+            deadline = time.time() + 5
+            while service._visible and time.time() < deadline:
+                time.sleep(0.02)
+            count = len(renders)
+            time.sleep(1.3)  # 超过一个 1s 刷新周期
+            self.assertEqual(len(renders), count)  # 隐藏期间不再渲染
+            api.events.append((500, None))  # OverlayShown
+            deadline = time.time() + 5
+            while len(renders) == count and time.time() < deadline:
+                time.sleep(0.02)
+            service.stop()
+        self.assertGreater(len(renders), count)  # 重新显示后恢复渲染
 
     def test_toggle_service_button_emits_bridge_action(self):
         x0, y0, x1, y1 = vr_overlay._button_rects()["toggle_service"]
