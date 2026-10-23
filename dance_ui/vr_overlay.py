@@ -361,7 +361,13 @@ class VROverlayService:
                     pass
 
     def _poll_events(self, openvr, overlay, handle, event):
-        while overlay.pollNextOverlayEvent(handle, event):
+        while True:
+            polled = overlay.pollNextOverlayEvent(handle, event)
+            # pyopenvr 的 pollNextOverlayEvent 返回 (result, event) 元组而不是 bool，
+            # 元组恒为真，直接 while 会无限空转，渲染永远轮不到（面板全透明的根因）
+            has_event = polled[0] if isinstance(polled, tuple) else bool(polled)
+            if not has_event:
+                return
             etype = event.eventType
             mouse = getattr(event.data, "mouse", None)
             if etype == getattr(openvr, "VREvent_MouseMove", 300) and mouse is not None:

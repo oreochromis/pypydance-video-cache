@@ -49,12 +49,14 @@ class FakeOverlayAPI:
         self.raw_submissions.append((width, height, bpp, len(buffer), type(buffer).__name__, bytes(head)))
 
     def pollNextOverlayEvent(self, handle, event):
+        # 和真实 pyopenvr 一致返回 (result, event) 元组——元组恒为真，
+        # 调用方若直接 while pollNextOverlayEvent(...) 会无限空转（回归测试）
         if not self.events:
-            return False
+            return False, event
         event.eventType, mouse = self.events.popleft()
         if mouse is not None:
             event.data.mouse.x, event.data.mouse.y, event.data.mouse.button = mouse
-        return True
+        return True, event
 
     def destroyOverlay(self, handle):
         self.destroyed.append(handle)
