@@ -244,11 +244,12 @@ class _GLTextureUploader:
                               self._GL_RGBA, self._GL_UNSIGNED_BYTE, None)
 
     def upload(self, openvr, overlay, handle, pixels):
-        # SteamVR 按 OpenGL 约定采样纹理，与 Pillow 的顶向下数据叠加后实测画面
-        # 旋转 180°，上传前预转 180° 抵消
+        # SteamVR 按 OpenGL 约定（原点左下）采样纹理，Pillow 数据是顶向下，
+        # 直接上传画面会上下颠倒；上传前垂直翻转抵消（注意不是 180° 旋转，
+        # 旋转会额外引入左右镜像、点选位置也会跟着错）
         from PIL import Image
         pixels = Image.frombytes("RGBA", (TEXTURE_W, TEXTURE_H), pixels) \
-                      .transpose(Image.ROTATE_180).tobytes()
+                      .transpose(Image.FLIP_TOP_BOTTOM).tobytes()
         self._gl.glBindTexture(self._GL_TEXTURE_2D, self._tex)
         self._gl.glTexSubImage2D(self._GL_TEXTURE_2D, 0, 0, 0, TEXTURE_W, TEXTURE_H,
                                  self._GL_RGBA, self._GL_UNSIGNED_BYTE, pixels)
