@@ -184,9 +184,12 @@ class _NativeIcons:
 
 
 def _approved_rgb(icon, width, height, background):
+    from PySide6.QtCore import QSize
     from PySide6.QtGui import QColor, QImage, QPainter
 
-    image = icon.pixmap(width, height).toImage()
+    # 高 DPI 屏幕上 QIcon.pixmap(w, h) 会按 devicePixelRatio 放大返回（如 40x40 -> 80x80），
+    # 显式要求 DPR 1.0，否则尺寸校验在缩放屏上永远失败
+    image = icon.pixmap(QSize(width, height), 1.0).toImage()
     if image.isNull() or image.width() != width or image.height() != height:
         raise ValueError("The approved icon could not be rendered at the native icon size.")
     image.setDevicePixelRatio(1.0)
