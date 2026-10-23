@@ -196,10 +196,16 @@ CALIBRATION_TARGETS = [
 ]
 
 
+# overlay 鼠标 y 坐标按边长=纹理宽的正方形归一化，纹理高度不足的部分上下居中留边
+# （9 点校准实测：py = (1 - Y_MARGIN - y) * TEXTURE_W，误差 < 6px）
+Y_MARGIN = (TEXTURE_W - TEXTURE_H) / 2 / TEXTURE_W
+
+
 def hit_test(x_norm, y_norm):
-    """overlay 鼠标事件坐标（0-1，y 原点在下）换算成像素后命中按钮动作 id"""
+    """overlay 鼠标事件坐标换算成纹理像素后命中按钮动作 id。
+    x 原点在左直接乘宽；y 原点在下且按正方形归一化（见 Y_MARGIN）"""
     px = x_norm * TEXTURE_W
-    py = (1.0 - y_norm) * TEXTURE_H
+    py = (1.0 - Y_MARGIN - y_norm) * TEXTURE_W
     for action, (x0, y0, x1, y1) in _button_rects().items():
         if x0 <= px <= x1 and y0 <= py <= y1:
             return action, px, py

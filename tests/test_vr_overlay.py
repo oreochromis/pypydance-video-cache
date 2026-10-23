@@ -96,11 +96,11 @@ class RenderTests(unittest.TestCase):
                                         "queue": [], "stats": {}, "clicks": 0, "hover": "test_click"})
         self.assertEqual(len(data), vr_overlay.TEXTURE_W * vr_overlay.TEXTURE_H * 4)
 
-    def test_hit_test_uses_bottom_origin_y_coordinates(self):
+    def test_hit_test_matches_calibrated_coordinate_mapping(self):
         # toggle_service 按钮 rect: (40, H-88, 300, H-32)；激光命中点像素 (100, H-60)
-        # OpenVR overlay 鼠标坐标 y 原点在下，需翻转到纹理像素坐标
+        # 校准实测映射：x*W；y 原点在下、按边长=W 的正方形归一化（上下各留 Y_MARGIN 边）
         x_norm = 100 / vr_overlay.TEXTURE_W
-        y_norm = 1.0 - (vr_overlay.TEXTURE_H - 60) / vr_overlay.TEXTURE_H
+        y_norm = 1.0 - vr_overlay.Y_MARGIN - (vr_overlay.TEXTURE_H - 60) / vr_overlay.TEXTURE_W
         action, px, py = vr_overlay.hit_test(x_norm, y_norm)
         self.assertEqual(action, "toggle_service")
         self.assertAlmostEqual(px, 100)
@@ -142,9 +142,12 @@ class ServiceTests(unittest.TestCase):
 
     def test_laser_events_update_hover_and_fire_actions(self):
         # 激光移到测试按钮中心（像素 (TEXTURE_W-170, H-60)）并按下左键
+        def to_norm(bx, by):
+            return (bx / vr_overlay.TEXTURE_W,
+                    1.0 - vr_overlay.Y_MARGIN - by / vr_overlay.TEXTURE_W, 1)
         bx, by = vr_overlay.TEXTURE_W - 170, vr_overlay.TEXTURE_H - 60
-        move = (300, (bx / vr_overlay.TEXTURE_W, 1 - by / vr_overlay.TEXTURE_H, 1))
-        click = (301, (bx / vr_overlay.TEXTURE_W, 1 - by / vr_overlay.TEXTURE_H, 1))
+        move = (300, to_norm(bx, by))
+        click = (301, to_norm(bx, by))
         api = FakeOverlayAPI(events=[move, click])
         service, bridge, logs = self.make_service(api)
         with patch.dict("sys.modules", {"openvr": fake_openvr(api)}):
@@ -160,7 +163,8 @@ class ServiceTests(unittest.TestCase):
     def test_toggle_service_button_emits_bridge_action(self):
         x0, y0, x1, y1 = vr_overlay._button_rects()["toggle_service"]
         px, py = (x0 + x1) / 2, (y0 + y1) / 2
-        click = (301, (px / vr_overlay.TEXTURE_W, 1 - py / vr_overlay.TEXTURE_H, 1))
+        click = (301, (px / vr_overlay.TEXTURE_W,
+                       1.0 - vr_overlay.Y_MARGIN - py / vr_overlay.TEXTURE_W, 1))
         api = FakeOverlayAPI(events=[click])
         service, bridge, logs = self.make_service(api)
         with patch.dict("sys.modules", {"openvr": fake_openvr(api)}):
