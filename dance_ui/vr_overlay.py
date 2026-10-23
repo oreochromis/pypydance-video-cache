@@ -174,26 +174,7 @@ def render_panel(state):
         lw = draw.textlength(label, font=font)
         draw.text(((x0 + x1 - lw) / 2, (y0 + y1) / 2 - 13), label, font=font, fill=(238, 240, 247, 255))
 
-    # 坐标校准靶点（调试期常开，定版后移除）：3x3 编号圆，用户按序点击后
-    # 用日志里的原始坐标反推精确映射
-    if state.get("calibration"):
-        num_font = _font(26, bold=True)
-        for i, (cx, cy) in enumerate(CALIBRATION_TARGETS):
-            draw.ellipse((cx - 30, cy - 30, cx + 30, cy + 30),
-                         fill=(216, 92, 92, 255), outline=(255, 255, 255, 255), width=3)
-            num = str(i + 1)
-            nw = draw.textlength(num, font=num_font)
-            draw.text((cx - nw / 2, cy - 17), num, font=num_font, fill=(255, 255, 255, 255))
-
     return img.tobytes()
-
-
-# 校准靶点像素坐标（编号 1-9，从左到右、从上到下）
-CALIBRATION_TARGETS = [
-    (100, 70), (512, 70), (924, 70),
-    (100, 300), (512, 300), (924, 300),
-    (100, 500), (512, 500), (924, 500),
-]
 
 
 # overlay 鼠标 y 坐标按边长=纹理宽的正方形归一化，纹理高度不足的部分上下居中留边
@@ -218,6 +199,69 @@ def _as_pixel_buffer(data):
     必须先复制进 ctypes 数组，byref 才能指向真实像素。"""
     import ctypes
     return (ctypes.c_char * len(data)).from_buffer_copy(data)
+
+
+class _GLTextureUploader:
+    """常驻 OpenGL 纹理上传通道：纹理对象只建一次，每次更新用 glTexSubImage2D
+    原地改写内容再 setOverlayTexture 通知 SteamVR。纹理句柄不变，SteamVR 合成器
+    不会采到"替换中"的空纹理，解决 setOverlayRaw 整纹理替换造成的更新闪烁。
+    任何一步失败都抛异常，由调用方回退 setOverlayRaw 兼容模式。"""
+
+    _GL_TEXTURE_2D = 0x0DE1
+    _GL_RGBA = 0x1908
+    _GL_UNSIGNED_BYTE = 0x1401
+    _GL_TEXTURE_MIN_FILTER = 0x2801
+    _GL_TEXTURE_MAG_FILTER = 0x2800
+    _GL_LINEAR = 0x2601
+
+    def __init__(self):
+        from PySide6.QtGui import QOffscreenSurface, QOpenGLContext, QGuiApplication
+        import ctypes
+        if QGuiApplication.instance() is None:
+            # 无 QGuiApplication 时创建 GL 上下文会直接段错误（C++ 层崩溃，
+            # 异常接不住），必须提前用 Python 异常拒绝
+            raise RuntimeError("QGuiApplication 不存在")
+        self._ct = ctypes
+        self._surface = QOffscreenSurface()
+        self._surface.create()
+        if not self._surface.isValid():
+            raise RuntimeError("QOffscreenSurface 创建失败")
+        self._ctx = QOpenGLContext()
+        if not self._ctx.create():
+            raise RuntimeError("QOpenGLContext 创建失败")
+        if not self._ctx.makeCurrent(self._surface):
+            raise RuntimeError("OpenGL 上下文 makeCurrent 失败")
+        self._gl = ctypes.windll.opengl32
+        tex = ctypes.c_uint(0)
+        self._gl.glGenTextures(1, ctypes.byref(tex))
+        self._tex = tex.value
+        if not self._tex:
+            raise RuntimeError("glGenTextures 返回 0")
+        self._gl.glBindTexture(self._GL_TEXTURE_2D, self._tex)
+        self._gl.glTexParameteri(self._GL_TEXTURE_2D, self._GL_TEXTURE_MIN_FILTER, self._GL_LINEAR)
+        self._gl.glTexParameteri(self._GL_TEXTURE_2D, self._GL_TEXTURE_MAG_FILTER, self._GL_LINEAR)
+        self._gl.glTexImage2D(self._GL_TEXTURE_2D, 0, self._GL_RGBA, TEXTURE_W, TEXTURE_H, 0,
+                              self._GL_RGBA, self._GL_UNSIGNED_BYTE, None)
+
+    def upload(self, openvr, overlay, handle, pixels):
+        self._gl.glBindTexture(self._GL_TEXTURE_2D, self._tex)
+        self._gl.glTexSubImage2D(self._GL_TEXTURE_2D, 0, 0, 0, TEXTURE_W, TEXTURE_H,
+                                 self._GL_RGBA, self._GL_UNSIGNED_BYTE, pixels)
+        self._gl.glFlush()
+        texture = openvr.Texture_t()
+        texture.handle = self._tex
+        texture.eType = openvr.TextureType_OpenGL
+        texture.eColorSpace = openvr.ColorSpace_Auto
+        overlay.setOverlayTexture(handle, texture)
+
+    def close(self):
+        try:
+            tex = self._ct.c_uint(self._tex)
+            self._gl.glDeleteTextures(1, self._ct.byref(tex))
+            self._ctx.doneCurrent()
+            self._surface.destroy()
+        except Exception:
+            pass
 
 
 def collect_state(clicks=0):
@@ -272,10 +316,11 @@ class OverlayBridge(QObject):
 class VROverlayService:
     """SteamVR 面板页生命周期管理。start/stop 幂等，线程内自处理 SteamVR 断连重试。"""
 
-    def __init__(self, bridge=None, state_provider=None, logger=None):
+    def __init__(self, bridge=None, state_provider=None, logger=None, gl_upload=True):
         self.bridge = bridge or OverlayBridge()
         self.state_provider = state_provider or collect_state
         self.logger = logger or self._default_logger
+        self._gl_upload = gl_upload
         self._stop = threading.Event()
         self._thread = None
         self._clicks = 0
@@ -339,7 +384,7 @@ class VROverlayService:
 
     def _session(self, openvr):
         overlay = openvr.IVROverlay()
-        handle = thumbnail = None
+        handle = thumbnail = uploader = None
         try:
             handle, thumbnail = overlay.createDashboardOverlay(PANEL_KEY, PANEL_NAME)
             overlay.setOverlayWidthInMeters(handle, WIDTH_METERS)
@@ -350,6 +395,12 @@ class VROverlayService:
                 overlay.setOverlayFromFile(thumbnail, str(icon_path))
             _set_session_active(True)
             self.logger("VR 面板已注册：打开 SteamVR 菜单即可看到「VRChat 跳舞房助手」页面")
+            uploader = None
+            if self._gl_upload:
+                try:
+                    uploader = _GLTextureUploader()
+                except Exception as exc:
+                    self.logger(f"VR 面板 GPU 纹理通道不可用，回退兼容模式（画面更新时可能闪烁）: {exc}")
             event = openvr.VREvent_t()
             last_render = 0.0
             last_hover = None
@@ -359,24 +410,27 @@ class VROverlayService:
                 self._poll_events(openvr, overlay, handle, event)
                 now = time.time()
                 # 状态 1 秒一刷；悬停按钮或点击计数变化时立即重绘一次。
-                # 不做光标跟随式高频重绘：Pillow 软件渲染 + 整纹理上传做不到流畅
-                # 跟随，强行高频只会又卡又闪；激光落点由 SteamVR 自己的光点指示
+                # 不做光标跟随式高频重绘：软件渲染做不到流畅跟随；
+                # 激光落点由 SteamVR 自己的光点指示
                 interactive = self._hover != last_hover or self._clicks != last_clicks
                 if now - last_render >= RENDER_INTERVAL or interactive:
                     last_render = now
                     last_hover, last_clicks = self._hover, self._clicks
                     state = self.state_provider(clicks=self._clicks)
                     state["hover"] = self._hover
-                    state["calibration"] = True   # 调试期常开校准靶点，定版后移除
                     pixels = render_panel(state)
-                    # 像素没变就跳过上传：setOverlayRaw 每次整体替换纹理，
-                    # 空闲时反复上传会在 SteamVR 里表现为闪烁
+                    # 像素没变就跳过上传，空闲时完全不打扰合成器
                     if pixels != last_pixels:
                         last_pixels = pixels
-                        overlay.setOverlayRaw(handle, _as_pixel_buffer(pixels), TEXTURE_W, TEXTURE_H, 4)
+                        if uploader is not None:
+                            uploader.upload(openvr, overlay, handle, pixels)
+                        else:
+                            overlay.setOverlayRaw(handle, _as_pixel_buffer(pixels),
+                                                  TEXTURE_W, TEXTURE_H, 4)
                 self._stop.wait(0.05)
-            # 退出时销毁 overlay
         finally:
+            if uploader is not None:
+                uploader.close()
             if handle is not None:
                 try:
                     overlay.destroyOverlay(handle)

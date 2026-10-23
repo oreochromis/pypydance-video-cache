@@ -115,7 +115,8 @@ class ServiceTests(unittest.TestCase):
         bridge = types.SimpleNamespace(action_requested=types.SimpleNamespace(emit=MagicMock()))
         logs = []
         service = vr_overlay.VROverlayService(
-            bridge=bridge, state_provider=lambda **kw: sample_state(**kw), logger=logs.append)
+            bridge=bridge, state_provider=lambda **kw: sample_state(**kw), logger=logs.append,
+            gl_upload=init_kw.get("gl_upload", False))  # 测试默认走 setOverlayRaw，GL 路径单独 mock
         return service, bridge, logs
 
     def test_session_registers_dashboard_overlay_and_stops_cleanly(self):
@@ -174,6 +175,34 @@ class ServiceTests(unittest.TestCase):
                 time.sleep(0.02)
             service.stop()
         bridge.action_requested.emit.assert_called_once_with("toggle_service")
+
+    def test_gl_uploader_used_when_available(self):
+        api = FakeOverlayAPI()
+        service, bridge, logs = self.make_service(api, gl_upload=True)
+        uploader = MagicMock()
+        with patch.object(vr_overlay, "_GLTextureUploader", return_value=uploader):
+            with patch.dict("sys.modules", {"openvr": fake_openvr(api)}):
+                service.start()
+                deadline = time.time() + 5
+                while not uploader.upload.called and time.time() < deadline:
+                    time.sleep(0.02)
+                service.stop()
+        uploader.upload.assert_called()
+        self.assertEqual(api.raw_submissions, [])  # GL 通道生效时不走 setOverlayRaw
+        uploader.close.assert_called_once()
+
+    def test_gl_uploader_failure_falls_back_to_raw(self):
+        api = FakeOverlayAPI()
+        service, bridge, logs = self.make_service(api, gl_upload=True)
+        with patch.object(vr_overlay, "_GLTextureUploader", side_effect=RuntimeError("no GL")):
+            with patch.dict("sys.modules", {"openvr": fake_openvr(api)}):
+                service.start()
+                deadline = time.time() + 5
+                while not api.raw_submissions and time.time() < deadline:
+                    time.sleep(0.02)
+                service.stop()
+        self.assertTrue(api.raw_submissions)  # 回退到 setOverlayRaw
+        self.assertTrue(any("回退兼容模式" in message for message in logs))
 
     def test_steamvr_not_running_retries_quietly_and_stops_fast(self):
         api = FakeOverlayAPI()
