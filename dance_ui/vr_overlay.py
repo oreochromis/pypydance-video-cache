@@ -174,7 +174,26 @@ def render_panel(state):
         lw = draw.textlength(label, font=font)
         draw.text(((x0 + x1 - lw) / 2, (y0 + y1) / 2 - 13), label, font=font, fill=(238, 240, 247, 255))
 
+    # 坐标校准靶点（调试期常开，定版后移除）：3x3 编号圆，用户按序点击后
+    # 用日志里的原始坐标反推精确映射
+    if state.get("calibration"):
+        num_font = _font(26, bold=True)
+        for i, (cx, cy) in enumerate(CALIBRATION_TARGETS):
+            draw.ellipse((cx - 30, cy - 30, cx + 30, cy + 30),
+                         fill=(216, 92, 92, 255), outline=(255, 255, 255, 255), width=3)
+            num = str(i + 1)
+            nw = draw.textlength(num, font=num_font)
+            draw.text((cx - nw / 2, cy - 17), num, font=num_font, fill=(255, 255, 255, 255))
+
     return img.tobytes()
+
+
+# 校准靶点像素坐标（编号 1-9，从左到右、从上到下）
+CALIBRATION_TARGETS = [
+    (100, 70), (512, 70), (924, 70),
+    (100, 300), (512, 300), (924, 300),
+    (100, 500), (512, 500), (924, 500),
+]
 
 
 def hit_test(x_norm, y_norm):
@@ -342,6 +361,7 @@ class VROverlayService:
                     last_hover, last_clicks = self._hover, self._clicks
                     state = self.state_provider(clicks=self._clicks)
                     state["hover"] = self._hover
+                    state["calibration"] = True   # 调试期常开校准靶点，定版后移除
                     pixels = render_panel(state)
                     # 像素没变就跳过上传：setOverlayRaw 每次整体替换纹理，
                     # 空闲时反复上传会在 SteamVR 里表现为闪烁
@@ -380,8 +400,9 @@ class VROverlayService:
                 action, px, py = hit_test(mouse.x, mouse.y)
                 self._hover = action
                 # 校准日志：原始坐标 -> 换算像素 -> 命中结果，用于核对坐标映射是否准确
-                self.logger(f"VR 点击: 原始 ({mouse.x:.4f}, {mouse.y:.4f}) -> 像素 ({px:.0f}, {py:.0f})"
-                            f" -> 命中 {action or '空白'}")
+                self.logger(f"VR 点击: 原始 ({mouse.x:.4f}, {mouse.y:.4f}) "
+                            f"cursor={getattr(mouse, 'cursorIndex', '?')} "
+                            f"-> 像素 ({px:.0f}, {py:.0f}) -> 命中 {action or '空白'}")
                 if action == "test_click":
                     self._clicks += 1
                     self.logger(f"VR 面板激光点击测试成功（第 {self._clicks} 次）")
