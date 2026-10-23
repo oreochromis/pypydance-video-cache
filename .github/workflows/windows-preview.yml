@@ -93,7 +93,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: windows
         run: |
-          $exePath = Join-Path $env:GITHUB_WORKSPACE "dist/PyPyDanceCache/PyPyDanceCache.exe"
+          $exePath = Join-Path $env:GITHUB_WORKSPACE "dist/VRChat跳舞房助手/VRChat跳舞房助手.exe"
           $reportPath = Join-Path $env:GITHUB_WORKSPACE "build-reports/frozen-smoke.json"
           $statePath = Join-Path $env:RUNNER_TEMP "pypydance-frozen-smoke-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
@@ -126,7 +126,7 @@ jobs:
       - name: Upload the verified Windows assets
         uses: actions/upload-artifact@v4
         with:
-          name: PyPyDanceCache-windows-x64
+          name: VRChatDanceAssistant-windows-x64
           path: release/*
           if-no-files-found: error
           retention-days: 30
@@ -163,7 +163,7 @@ jobs:
       - name: Download this run's verified Windows assets
         uses: actions/download-artifact@v4
         with:
-          name: PyPyDanceCache-windows-x64
+          name: VRChatDanceAssistant-windows-x64
           path: release
 
       - name: Publish the requested stable Windows release
