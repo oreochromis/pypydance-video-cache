@@ -177,16 +177,20 @@ def render_panel(state):
     return img.tobytes()
 
 
-# overlay 鼠标 y 坐标按边长=纹理宽的正方形归一化，纹理高度不足的部分上下居中留边
-# （9 点校准实测：py = (1 - Y_MARGIN - y) * TEXTURE_W，误差 < 6px）
+# overlay 鼠标坐标按边长=纹理宽的正方形归一化，纹理高度不足的部分上下居中留边
+# （9 点校准实测，误差 < 6px）。raw 上传时 y 原点在下：py = (1 - Y_MARGIN - y) * W；
+# GL 纹理上传时 SteamVR 报的 y 与 raw 互为镜像（原点在上）：py = (y - Y_MARGIN) * W
 Y_MARGIN = (TEXTURE_W - TEXTURE_H) / 2 / TEXTURE_W
 
 
-def hit_test(x_norm, y_norm):
+def hit_test(x_norm, y_norm, y_origin_top=False):
     """overlay 鼠标事件坐标换算成纹理像素后命中按钮动作 id。
-    x 原点在左直接乘宽；y 原点在下且按正方形归一化（见 Y_MARGIN）"""
+    x 原点在左直接乘宽；y 方向取决于上传通道（见 Y_MARGIN 注释）"""
     px = x_norm * TEXTURE_W
-    py = (1.0 - Y_MARGIN - y_norm) * TEXTURE_W
+    if y_origin_top:
+        py = (y_norm - Y_MARGIN) * TEXTURE_W
+    else:
+        py = (1.0 - Y_MARGIN - y_norm) * TEXTURE_W
     for action, (x0, y0, x1, y1) in _button_rects().items():
         if x0 <= px <= x1 and y0 <= py <= y1:
             return action, px, py
@@ -413,7 +417,7 @@ class VROverlayService:
             last_clicks = -1
             last_pixels = None
             while not self._stop.is_set():
-                self._poll_events(openvr, overlay, handle, event)
+                self._poll_events(openvr, overlay, handle, event, y_origin_top=uploader is not None)
                 now = time.time()
                 # 状态 1 秒一刷；悬停按钮或点击计数变化时立即重绘一次。
                 # 不做光标跟随式高频重绘：软件渲染做不到流畅跟随；
@@ -448,7 +452,7 @@ class VROverlayService:
                 except Exception:
                     pass
 
-    def _poll_events(self, openvr, overlay, handle, event):
+    def _poll_events(self, openvr, overlay, handle, event, y_origin_top=False):
         while True:
             polled = overlay.pollNextOverlayEvent(handle, event)
             # pyopenvr 的 pollNextOverlayEvent 返回 (result, event) 元组而不是 bool，
@@ -459,11 +463,11 @@ class VROverlayService:
             etype = event.eventType
             mouse = getattr(event.data, "mouse", None)
             if etype == getattr(openvr, "VREvent_MouseMove", 300) and mouse is not None:
-                self._hover = hit_test(mouse.x, mouse.y)[0]
+                self._hover = hit_test(mouse.x, mouse.y, y_origin_top)[0]
             elif etype == getattr(openvr, "VREvent_MouseButtonDown", 301) and mouse is not None:
                 if getattr(mouse, "button", None) != getattr(openvr, "VRMouseButton_Left", 1):
                     continue
-                action, px, py = hit_test(mouse.x, mouse.y)
+                action, px, py = hit_test(mouse.x, mouse.y, y_origin_top)
                 self._hover = action
                 # 校准日志：原始坐标 -> 换算像素 -> 命中结果，用于核对坐标映射是否准确
                 self.logger(f"VR 点击: 原始 ({mouse.x:.4f}, {mouse.y:.4f}) "

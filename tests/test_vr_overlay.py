@@ -108,6 +108,15 @@ class RenderTests(unittest.TestCase):
         # 两个按钮之间的空白处不命中
         action, _, _ = vr_overlay.hit_test(0.5, y_norm)
         self.assertIsNone(action)
+    def test_hit_test_gl_mode_uses_top_origin_y(self):
+        # GL 纹理通道下 SteamVR 报的鼠标 y 与 raw 互为镜像（原点在上）
+        py_target = vr_overlay.TEXTURE_H - 60
+        x_norm = 100 / vr_overlay.TEXTURE_W
+        y_norm = vr_overlay.Y_MARGIN + py_target / vr_overlay.TEXTURE_W
+        action, px, py = vr_overlay.hit_test(x_norm, y_norm, y_origin_top=True)
+        self.assertEqual(action, "toggle_service")
+        self.assertAlmostEqual(px, 100)
+        self.assertAlmostEqual(py, py_target)
 
 
 class ServiceTests(unittest.TestCase):
