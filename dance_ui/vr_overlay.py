@@ -329,6 +329,7 @@ class VROverlayService:
             last_render = 0.0
             last_hover = None
             last_clicks = -1
+            last_pixels = None
             while not self._stop.is_set():
                 self._poll_events(openvr, overlay, handle, event)
                 now = time.time()
@@ -342,7 +343,11 @@ class VROverlayService:
                     state = self.state_provider(clicks=self._clicks)
                     state["hover"] = self._hover
                     pixels = render_panel(state)
-                    overlay.setOverlayRaw(handle, _as_pixel_buffer(pixels), TEXTURE_W, TEXTURE_H, 4)
+                    # 像素没变就跳过上传：setOverlayRaw 每次整体替换纹理，
+                    # 空闲时反复上传会在 SteamVR 里表现为闪烁
+                    if pixels != last_pixels:
+                        last_pixels = pixels
+                        overlay.setOverlayRaw(handle, _as_pixel_buffer(pixels), TEXTURE_W, TEXTURE_H, 4)
                 self._stop.wait(0.05)
             # 退出时销毁 overlay
         finally:
@@ -372,8 +377,11 @@ class VROverlayService:
             elif etype == getattr(openvr, "VREvent_MouseButtonDown", 301) and mouse is not None:
                 if getattr(mouse, "button", None) != getattr(openvr, "VRMouseButton_Left", 1):
                     continue
-                action, _, _ = hit_test(mouse.x, mouse.y)
+                action, px, py = hit_test(mouse.x, mouse.y)
                 self._hover = action
+                # 校准日志：原始坐标 -> 换算像素 -> 命中结果，用于核对坐标映射是否准确
+                self.logger(f"VR 点击: 原始 ({mouse.x:.4f}, {mouse.y:.4f}) -> 像素 ({px:.0f}, {py:.0f})"
+                            f" -> 命中 {action or '空白'}")
                 if action == "test_click":
                     self._clicks += 1
                     self.logger(f"VR 面板激光点击测试成功（第 {self._clicks} 次）")
