@@ -72,7 +72,7 @@ SteamVR 的自动启动接口要求 manifest 标记 `is_dashboard_overlay=true`�
 
 API 依据：[Valve OpenVR 接口定义](https://github.com/ValveSoftware/openvr/blob/0924064316de3effbcd1acf1e309182a2deb1c05/headers/openvr.h)、[pyopenvr 固定版本](https://github.com/cmbruns/pyopenvr/tree/2.12.1401)。
 
-### SteamVR 面板页（实验性）
+### SteamVR 面板页
 
 `dance_ui/vr_overlay.py` 以 `VRApplication_Overlay` 长连接注册 dashboard overlay（`sharkspeare.vrchatdanceassistant.panel`），出现在 SteamVR 菜单中。纹理用 Pillow 绘制后经 `SetOverlayRaw` 提交 RGBA 字节，不依赖 OpenGL 上下文；缩略图用 `SetOverlayFromFile` 指向 `assets/app-icon.png`。输入走 `VROverlayInputMethod_Mouse`，控制器激光映射为鼠标事件（坐标 0-1，y 原点在下），按钮命中测试在渲染坐标系完成，动作经 Qt 信号排队回 GUI 线程。SteamVR 未运行时 15 秒间隔静默重试，断连自动重连；overlay 会话存活期间“跟随 SteamVR 启动”的短连接复用同一会话。面板内容 1 秒刷新一次。实际显示效果与激光交互只能在 VR 环境验收。
 

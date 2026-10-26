@@ -1,4 +1,4 @@
-"""SteamVR 仪表盘 overlay（实验性）：在 SteamVR 菜单里显示助手页面。
+"""SteamVR 仪表盘 overlay：在 SteamVR 菜单里显示助手页面。
 
 出现在 SteamVR 菜单（dashboard overlay + 缩略图）、显示当前歌曲与缓存状态、
 接收控制器激光的鼠标事件（启停服务 + CoolDown 两个按钮）。

@@ -58,7 +58,9 @@ VRC_LOG_DIR = os.path.join(os.environ.get("USERPROFILE", ""), "AppData", "LocalL
 MAPPING_PATH = os.path.join(SCRIPT_DIR, "mapping.json")
 
 QUEUE_RE = re.compile(r"^\[PyPyDanceQueue] (\[.*])")
-WD_QUEUE_RE = re.compile(r"queue info serialized: (\[.*])")  # WannaDance 队列
+WD_QUEUE_RE = re.compile(r"queue info serialized: (\[.*])")  # WannaDance 队列（不含正在播放的歌曲）
+# WannaDance 当前歌曲行（queue info 不含当前歌曲，开播即移出，需从这里解析后插回队首）
+WD_STATE_RE = re.compile(r"UpdateState: version = [^,]+, songId = (\d+), player = ([^,]*), isRandom = \w+, infoString = (.*?), volume = ")
 FILENAME_RE = re.compile(r"^[\w.\-]+\.mp4$")
 YT_FILENAME_RE = re.compile(r"^yt_(\d+)\.mp4$")
 WD_FILE_RE = re.compile(r"^(\d+)-[0-9a-z]+\.mp4$", re.IGNORECASE)  # play.udon.dance 的文件名 5283-667d628852a98.mp4
@@ -79,12 +81,12 @@ DEFAULT_CONFIG = {
     "preferred_cdn_ip": "",
     "auto_prefer_cdn": True,
     "enable_youtube_cache": True,
-    "youtube_permanent": True,
+    "youtube_permanent": False,
     "cdn_permanent": False,
-    "wd_permanent": True,
+    "wd_permanent": False,
     "cooldown_file": "",
     "bundle_direct": True,
-    "vr_overlay": False,
+    "vr_overlay": True,
 }
 
 _config = {}
@@ -453,7 +455,7 @@ def _deferral_warnings():
             and not (_config.get("library_dir") or "").strip()):
         out.append("PyPyDance 永久保存已开启但未设置曲库目录，暂缓生效；在存储页填写曲库目录后自动启用")
     if _config.get("wd_permanent") and not (_config.get("wd_library_dir") or "").strip():
-        out.append("WannaDance 永久保存已开启但未设置 WannaDance 曲库目录，暂缓生效；在存储页填写后自动启用")
+        out.append("WannaDance 永久保存已开启但未设置曲库目录，暂缓生效；在存储页填写曲库目录后自动启用")
     return out
 
 
@@ -987,11 +989,11 @@ DOH_PROVIDERS = (
 )
 
 
-def _doh_query(doh, host):
+def _doh_query(doh, host, timeout=8):
     try:
         ctx = ssl.create_default_context()
         u = urllib.parse.urlparse(doh)
-        conn = http.client.HTTPSConnection(u.hostname, 443, timeout=8, context=ctx)
+        conn = http.client.HTTPSConnection(u.hostname, 443, timeout=timeout, context=ctx)
         conn.request("GET", f"{u.path}?name={host}&type=A", headers={"Accept": "application/dns-json"})
         resp = conn.getresponse()
         data = json.loads(resp.read().decode("utf-8", "replace"))
@@ -1027,7 +1029,7 @@ def gather_candidate_ips(host, rounds=2):
         pass
     for _ in range(rounds):
         for doh in DOH_PROVIDERS:
-            ips.extend(_doh_query(doh, host))
+            ips.extend(_doh_query(doh, host, timeout=4))
     seen = set()
     out = []
     for ip in ips:
@@ -1957,6 +1959,7 @@ def _download_test(ip, filename, nbytes, timeout=20):
 
 def speed_test_ips():
     """快速扫描：合并系统 DNS 和多个 DoH 服务器解析到的候选节点，各下载 8MB 测速"""
+    log("快速扫描：正在解析候选节点（DoH 查询约需几秒到十几秒）...")
     filename = _pick_test_file()
     candidates = gather_candidate_ips("cdn.pypy.dance")
     pref = (_config.get("preferred_cdn_ip") or "").strip()
@@ -1985,6 +1988,7 @@ def auto_speedtest_apply():
     热生效（ordered_ips 每次现读配置），无需重启服务。"""
     if _stop_event.wait(3):  # 让位给启动解析与首批下载
         return
+    log("自动优选 CDN：正在解析候选节点（DoH 查询约需几秒到十几秒）...")
     filename = _pick_test_file()
     candidates = gather_candidate_ips("cdn.pypy.dance")
     pref = (_config.get("preferred_cdn_ip") or "").strip()
@@ -1995,12 +1999,16 @@ def auto_speedtest_apply():
         return
     log(f"自动优选 CDN：对 {len(candidates)} 个候选节点测速...")
     best_ip, best_mbps = None, 0.0
+    results = []
     for ip in candidates:
         if _stop_event.is_set():
             return
-        mbps, _ = _download_test(ip, filename, SPEEDTEST_BYTES)
+        mbps, err = _download_test(ip, filename, SPEEDTEST_BYTES)
+        results.append({"ip": ip, "mbps": mbps, "error": err})
+        emit("speedtest_result", ip=ip, mbps=mbps, error=err)
         if mbps is not None and mbps > best_mbps:
             best_ip, best_mbps = ip, mbps
+    emit("speedtest_done", results=results)
     if best_ip is None:
         log("自动优选 CDN：所有候选节点均未连通，保持当前设置")
         return
@@ -2452,15 +2460,31 @@ def find_newest_log():
     return max(candidates, key=os.path.getmtime)
 
 
+_wd_current_song = None  # WannaDance 正在播放的歌曲（queue info 不含当前歌曲，从 UpdateState 行解析）
+_wd_last_queue = None    # WannaDance 最近一次排队列表
+
+
+def _reset_wd_state():
+    """服务停止时清空 WannaDance 队列状态，避免下次启动/换房间后残留上次会话的当前歌曲"""
+    global _wd_current_song, _wd_last_queue
+    _wd_current_song = None
+    _wd_last_queue = None
+
+
 def extract_queue_items(lines):
-    """从日志行中取最后一条队列 JSON（PyPyDance 或 WannaDance，后出现的生效）"""
+    """从日志行中取最后一条队列（PyPyDance 或 WannaDance，后出现的生效）。
+    WannaDance 的 queue info 开播即把当前歌曲移出队列，当前歌曲从 UpdateState
+    行解析；两种行独立出现，各自更新模块状态后合成：当前歌曲 + 排队列表。"""
+    global _wd_current_song, _wd_last_queue
     items = None
+    source = None
     for line in lines:
         content = line.split("  -  ", 1)[-1].strip()
         m = QUEUE_RE.match(content)
         if m:
             try:
                 items = json.loads(m.group(1))
+                source = "pypy"
             except Exception:
                 pass
             continue
@@ -2468,10 +2492,25 @@ def extract_queue_items(lines):
         if m:
             try:
                 raw = json.loads(m.group(1))
-                items = [_normalize_wd_item(x) for x in raw if isinstance(x, dict)]
+                _wd_last_queue = [_normalize_wd_item(x) for x in raw if isinstance(x, dict)]
+                source = "wd"
             except Exception:
                 pass
-    return items
+            continue
+        m = WD_STATE_RE.search(content)
+        if m:
+            _wd_current_song = _normalize_wd_state(m)
+            source = "wd"
+    if source == "wd":
+        queue = list(_wd_last_queue or [])
+        current = _wd_current_song
+        if current is None:
+            return queue
+        queue = [x for x in queue if x.get("songNum") != current.get("songNum")]
+        return [current] + queue
+    if source == "pypy":
+        return items
+    return None
 
 
 def _normalize_wd_item(x):
@@ -2481,6 +2520,21 @@ def _normalize_wd_item(x):
         "songNum": x.get("songId"),
         "videoName": x.get("title") or "?",
         "playerName": ", ".join(str(p) for p in players),
+        "wd": True,
+    }
+
+
+def _normalize_wd_state(m):
+    """WannaDance UpdateState 行 -> 队首当前歌曲。infoString 末段是点歌人，去掉后与队列 title 格式一致"""
+    player = m.group(2).strip()
+    info = m.group(3).strip()
+    suffix = " | " + player
+    if player and info.endswith(suffix):
+        info = info[:-len(suffix)]
+    return {
+        "songNum": int(m.group(1)),
+        "videoName": info or "?",
+        "playerName": player,
         "wd": True,
     }
 
@@ -2739,11 +2793,12 @@ def cooldown_arm():
 def cooldown_disarm(silent=False):
     global _cooldown_armed, _cooldown_serving, _cooldown_exclude
     with _cooldown_lock:
+        was_serving = _cooldown_serving is not None
         _cooldown_armed = False
         _cooldown_serving = None
         _cooldown_exclude = None
     if not silent:
-        log("Cool Down 已取消")
+        log("Cool Down 已取消" + ("；在房间里重新加载当前歌曲即可恢复正常播放" if was_serving else ""))
     _emit_cooldown()
 
 
@@ -3085,6 +3140,7 @@ def stop_services():
                            youtube_available=False, queue_watcher_available=False, warnings=[],
                            hosts_restore_pending=_hosts_restore_pending, error=error)
         log("服务已停止" if restored else "服务已停止，hosts 尚未成功恢复")
+        _reset_wd_state()
         refresh_queue_state()
         return error
 

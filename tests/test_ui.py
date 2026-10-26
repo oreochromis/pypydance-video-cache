@@ -69,6 +69,7 @@ class UIIntegrationTests(unittest.TestCase):
         self.config.update(
             cache_dir=str(self.root / "cache"), library_dir=str(self.root / "library"),
             cooldown_file=str(self.root / "cooldown.mp4"), cdn_permanent=True,
+            vr_overlay=False,  # 测试 runner 上不起真实 VR overlay 线程
         )
         self.core_mocks = {}
         guarded = (

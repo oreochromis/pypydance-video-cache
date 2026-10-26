@@ -130,7 +130,7 @@ class MainWindow(QMainWindow, Pages):
         self.render_queue()
         self.render_downloads()
         QTimer.singleShot(0, self.refresh_steamvr_startup)
-        # SteamVR 面板页（实验）：仅真机 Windows 启用；跟随配置热启停
+        # SteamVR 面板页：仅真机 Windows 启用；跟随配置热启停
         if os.name == "nt" and not controller.demo:
             from . import vr_overlay
             self._vr_overlay = vr_overlay.VROverlayService()
@@ -331,9 +331,7 @@ class MainWindow(QMainWindow, Pages):
         if not running and self._runtime.get("hosts_restore_pending") and phase not in ("starting", "stopping"):
             self.service_button.setText("恢复系统设置")
         self.service_button.setEnabled(phase not in ("starting", "stopping"))
-        if self._runtime_warning:
-            self.notify(self._runtime_warning, persistent=True)
-        elif self._runtime.get("error"):
+        if self._runtime.get("error"):
             self.notify(str(self._runtime["error"]), error=True)
         elif previous_warning and self.banner.text() == previous_warning:
             self.banner.clear()
@@ -415,7 +413,7 @@ class MainWindow(QMainWindow, Pages):
                 self.cooldown_path.setText(config["cooldown_file"])
                 self.preferred_ip.setText(config["preferred_cdn_ip"])
                 self.auto_prefer_cdn.setChecked(config.get("auto_prefer_cdn", True))
-                self.vr_overlay.setChecked(config.get("vr_overlay", False))
+                self.vr_overlay.setChecked(config.get("vr_overlay", True))
             for name in (section,) if section else ("storage", "settings"):
                 self._dirty[name] = False
                 self.apply_buttons[name].setEnabled(False)
@@ -600,7 +598,6 @@ class MainWindow(QMainWindow, Pages):
         self.quick_scan_button.setEnabled(False)
         self.full_scan_button.setEnabled(False)
         self.use_ip_button.hide()
-        self.favorite_ip_button.hide()
         self._scan_results = []
         self.scan_table.setRowCount(0)
         self.scan_table.hide()
@@ -621,7 +618,6 @@ class MainWindow(QMainWindow, Pages):
             self.scan_table.setItem(index, 2, self.cell("可用" if item in valid else "未连通", item.get("error", "")))
         self.scan_status.setText(f"测速完成 · {len(valid)} 个可用地址。选择地址后，点击“使用选中的 IP”，再应用更改。" if valid else "没有测得可用地址。请检查网络，或保留自动选择。")
         self.use_ip_button.setVisible(bool(valid))
-        self.favorite_ip_button.setVisible(bool(valid))
         self.resize_tables()
         if valid:
             self.scan_table.selectRow(0)
@@ -794,8 +790,8 @@ class MainWindow(QMainWindow, Pages):
 
     def clear_notice(self, generation):
         if generation == self._banner_generation:
-            self.banner.setText(self._runtime_warning)
-            self.banner.setVisible(bool(self._runtime_warning))
+            self.banner.clear()
+            self.banner.hide()
 
     @staticmethod
     def cell(value, tooltip=""):

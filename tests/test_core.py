@@ -165,6 +165,39 @@ class CoreTests(unittest.TestCase):
         snapshot["preload_count"] = 99
         self.assertEqual(self.dc.get_config()["preload_count"], 3)
 
+    def test_wd_queue_inserts_current_song_from_update_state(self):
+        # WannaDance 的 queue info 开播即把当前歌曲移出队列，需从 UpdateState 行插回队首
+        lines = [
+            'x  -  [VideoQueueManager] : OnPreSerialization: queue info serialized: '
+            '[{"playerNames":["A"],"title":"1001. Song A","songId":1001},'
+            '{"playerNames":["B"],"title":"1002. Song B","songId":1002}]',
+            'x  -  [VideoQueueManager] : UpdateState: version = 20261025232340, songId = 1001, '
+            'player = A, isRandom = False, infoString = 1001. Song A | group | A, volume = 0.68, flip = False',
+            'x  -  [VideoQueueManager] : OnPreSerialization: queue info serialized: '
+            '[{"playerNames":["B"],"title":"1002. Song B","songId":1002}]',
+        ]
+        items = self.dc.extract_queue_items(lines)
+        self.assertEqual([x["songNum"] for x in items], [1001, 1002])
+        self.assertEqual(items[0]["videoName"], "1001. Song A | group")
+        self.assertEqual(items[0]["playerName"], "A")
+        self.assertTrue(items[0]["wd"])
+
+    def test_wd_queue_without_update_state_keeps_legacy_behavior(self):
+        items = self.dc.extract_queue_items([
+            'x  -  queue info serialized: [{"playerNames":["B"],"title":"1002. Song B","songId":1002}]',
+        ])
+        self.assertEqual([x["songNum"] for x in items], [1002])
+
+    def test_pypy_queue_after_wd_lines_wins(self):
+        lines = [
+            'x  -  queue info serialized: [{"playerNames":["B"],"title":"1002. Song B","songId":1002}]',
+            'x  -  [PyPyDanceQueue] [{"songNum":7,"videoName":"P","playerName":"pp"}]',
+        ]
+        items = self.dc.extract_queue_items(lines)
+        self.assertEqual([x["songNum"] for x in items], [7])
+        self.assertNotIn("wd", items[0])
+
+
     def test_loading_legacy_shared_directory_preserves_library_and_blocks_cleanup(self):
         song = self.cache / "1.mp4"
         song.write_bytes(b"permanent video")
@@ -847,7 +880,7 @@ class CoreTests(unittest.TestCase):
             self.assertTrue(state["running"])
             self.assertFalse(state["youtube_available"])
             self.assertFalse(state["queue_watcher_available"])
-            self.assertEqual(len(state["warnings"]), 3)
+            self.assertEqual(len(state["warnings"]), 2)
             hijack.assert_called_once_with(False)
             self.dc.stop_services()
             self.assertEqual(self.dc.get_runtime_state()["phase"], "stopped")
