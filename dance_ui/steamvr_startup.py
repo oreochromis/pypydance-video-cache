@@ -87,11 +87,18 @@ def applications():
                 openvr.initInternal2(openvr.VRApplication_Background, None)
                 initialized = True
             except Exception:
-                # VR 面板页（实验）持有长生命周期 overlay 会话时无法再 init Background，
-                # 复用它的会话查询启动设置
+                # VR 面板持有长生命周期 overlay 会话时无法再 init Background，
+                # 复用它的会话查询启动设置（此时绝不能 shutdownInternal，会拆会话）
                 from . import vr_overlay
                 api = vr_overlay.active_applications()
                 if api is None:
+                    # init 失败必须 shutdownInternal 清掉进程内残留状态（官方
+                    # VR_Init 的失败路径就是这么做的，pyopenvr 漏了），否则
+                    # SteamVR 之后启动，后续任何 init 也都会失败
+                    try:
+                        openvr.shutdownInternal()
+                    except Exception:
+                        pass
                     raise
                 yield api
                 return

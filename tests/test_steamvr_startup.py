@@ -155,7 +155,8 @@ class SteamVRStartupTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "先启动 SteamVR"):
                 with startup.applications():
                     self.fail("Failed initialization must not enter session")
-        module.shutdownInternal.assert_not_called()
+        # init 失败且无 overlay 会话可复用时，必须 shutdownInternal 清掉进程内残留状态
+        module.shutdownInternal.assert_called_once()
 
 
 class SingleInstanceTests(unittest.TestCase):

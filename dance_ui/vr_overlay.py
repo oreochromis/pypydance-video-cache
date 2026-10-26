@@ -413,6 +413,13 @@ class VROverlayService:
             try:
                 openvr.init(openvr.VRApplication_Overlay)
             except Exception:
+                # pyopenvr 的 init 失败路径不做清理，而官方 VR_Init 失败时会
+                # VR_ShutdownInternal()；不补这步会让进程内 OpenVR 状态残留，
+                # SteamVR 之后启动也永远重连不上
+                try:
+                    openvr.shutdown()
+                except Exception:
+                    pass
                 if not retry_logged:
                     self.logger("VR 面板：等待 SteamVR 启动（启动后自动出现，无需操作）")
                     retry_logged = True
