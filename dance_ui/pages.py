@@ -234,6 +234,11 @@ class Pages:
         bilibili_box.addStretch()
         update.box.addWidget(bilibili_row)
         box.addWidget(update)
+
+        contributors = Card()
+        contributors.box.addWidget(label("Contributors", subheading=True))
+        contributors.box.addWidget(label("鲨鲨比亚Sharkspeare　小余12", muted=True))
+        box.addWidget(contributors)
         box.addStretch()
         return self.with_apply_footer(area, "settings")
 
