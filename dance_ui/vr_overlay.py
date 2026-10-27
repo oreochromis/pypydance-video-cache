@@ -406,7 +406,8 @@ class VROverlayService:
         retry_logged = False
         while not self._stop.is_set():
             try:
-                import openvr
+                from .openvr_runtime import import_openvr
+                openvr = import_openvr(self.logger)
             except (ImportError, OSError) as exc:
                 self.logger(f"VR 面板不可用（缺少 OpenVR 依赖）: {exc}")
                 return

@@ -75,7 +75,8 @@ def applications():
     # Importing/loading the native library is deliberately Windows-only and
     # lazy: demo and macOS never load OpenVR or connect to a headset runtime.
     try:
-        import openvr
+        from .openvr_runtime import import_openvr
+        openvr = import_openvr()
     except (ImportError, OSError) as exc:
         raise RuntimeError("缺少 OpenVR 运行依赖，请安装完整 Windows 程序包。") from exc
     with _runtime_lock:
