@@ -735,6 +735,9 @@ class MainWindow(QMainWindow, Pages):
         import dance_cache
         QDesktopServices.openUrl(QUrl(dance_cache.PROJECT_PAGE))
 
+    def open_bilibili_page(self):
+        QDesktopServices.openUrl(QUrl("https://space.bilibili.com/15406829"))
+
     def check_updates_clicked(self):
         if self.controller.demo:
             self.update_status.setText("演示模式不检查更新。")
