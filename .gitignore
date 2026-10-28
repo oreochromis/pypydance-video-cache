@@ -19,7 +19,9 @@ build-reports/
 
 # Runtime data and personal media
 config.json
+config-*.tmp
 mapping.json
+bundle_songs.json
 cache/
 cookie/
 error.log
