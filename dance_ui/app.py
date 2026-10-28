@@ -8,12 +8,12 @@ import tempfile
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths, Qt, QTimer, Slot, QUrl
+from PySide6.QtCore import QStandardPaths, Qt, QTimer, Signal, Slot, QUrl
 from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QFileDialog, QHBoxLayout, QHeaderView,
-    QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QScrollArea,
-    QStackedWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QScrollArea,
+    QStackedWidget, QSystemTrayIcon, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from . import __version__
@@ -51,6 +51,8 @@ def _version_newer(latest, current):
 
 
 class MainWindow(QMainWindow, Pages):
+    restore_requested = Signal()
+
     def __init__(self, controller: CoreController, store: ThemeStore):
         super().__init__()
         self.controller, self.store = controller, store
@@ -74,6 +76,10 @@ class MainWindow(QMainWindow, Pages):
         self._maintenance = None
         self._can_close = False
         self._closing = False
+        self._tray = None
+        self._tray_quit = False
+        self._tray_hint_shown = False
+        self.restore_requested.connect(self._restore_from_tray)
         self._runtime_warning = ""
         self._update_manual = False
         self._update_prompted = False
@@ -414,6 +420,7 @@ class MainWindow(QMainWindow, Pages):
                 self.preferred_ip.setText(config["preferred_cdn_ip"])
                 self.auto_prefer_cdn.setChecked(config.get("auto_prefer_cdn", True))
                 self.vr_overlay.setChecked(config.get("vr_overlay", True))
+                self.close_to_tray.setChecked(config.get("close_to_tray", False))
             for name in (section,) if section else ("storage", "settings"):
                 self._dirty[name] = False
                 self.apply_buttons[name].setEnabled(False)
@@ -456,7 +463,7 @@ class MainWindow(QMainWindow, Pages):
         else:
             patch = {"preload_count": self.preload_count.value(), "preload_sequential": self.preload_sequential.isChecked(),
                      "enable_youtube_cache": self.youtube_enabled.isChecked(), "bundle_direct": self.bundle_direct.isChecked(),
-                     "vr_overlay": self.vr_overlay.isChecked(),
+                     "vr_overlay": self.vr_overlay.isChecked(), "close_to_tray": self.close_to_tray.isChecked(),
                      "cooldown_file": self.cooldown_path.text().strip(), "preferred_cdn_ip": self.preferred_ip.text().strip(),
                      "auto_prefer_cdn": self.auto_prefer_cdn.isChecked()}
         self.controller.apply_config(patch, section)
@@ -1020,25 +1027,80 @@ class MainWindow(QMainWindow, Pages):
 
     def closeEvent(self, event):
         if self._can_close:
+            if self._tray is not None:
+                self._tray.hide()
             event.accept()
+            return
+        if (not self._tray_quit and not self._closing
+                and self.controller.config().get("close_to_tray")
+                and QSystemTrayIcon.isSystemTrayAvailable()):
+            event.ignore()
+            self._minimize_to_tray()
             return
         event.ignore()
         if self._closing:
             return
         if any(self.controller.busy(operation) for operation in ("apply_storage", "apply_settings", "steamvr_startup")):
+            self._tray_quit = False
             self.notify("正在保存设置，请等待完成后再退出。")
             return
         if (any(self._dirty.values()) or self._steamvr_dirty) and QMessageBox.question(
             self, "尚有未应用的更改", "存储、设置或启动选项有未应用的更改。放弃这些更改并退出？\n外观设置已经自动保存。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
         ) != QMessageBox.StandardButton.Yes:
+            self._tray_quit = False
             return
         self._closing = True
+        if self._tray is not None:
+            self._tray.hide()
         if self._vr_overlay is not None:
             self._vr_overlay.stop()
         self.notify("正在停止服务并退出…", persistent=True)
         self.setEnabled(False)
         self.controller.shutdown()
+
+    # ---------------- 系统托盘 ----------------
+
+    def _ensure_tray(self):
+        if self._tray is not None:
+            return
+        tray = QSystemTrayIcon(app_icon(), self)
+        tray.setToolTip("VRChat 跳舞房助手")
+        menu = QMenu()
+        show_action = menu.addAction("显示主界面")
+        show_action.triggered.connect(self._restore_from_tray)
+        quit_action = menu.addAction("退出")
+        quit_action.triggered.connect(self._quit_from_tray)
+        tray.setContextMenu(menu)
+        tray.activated.connect(self._on_tray_activated)
+        self._tray = tray
+
+    def _minimize_to_tray(self):
+        self._ensure_tray()
+        self._tray.show()
+        self.hide()
+        if not self._tray_hint_shown:
+            self._tray_hint_shown = True
+            self._tray.showMessage("VRChat 跳舞房助手", "已最小化到托盘，缓存服务继续运行。双击托盘图标恢复窗口。",
+                                   QSystemTrayIcon.MessageIcon.Information, 3000)
+
+    def _restore_from_tray(self):
+        if self._closing or self._can_close:
+            return
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        if self._tray is not None:
+            self._tray.hide()
+
+    def _on_tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            self._restore_from_tray()
+
+    def _quit_from_tray(self):
+        self._tray_quit = True
+        self.showNormal()  # 未应用更改的确认框需要可见的父窗口
+        self.close()
 
 
 def main(argv=None):
@@ -1095,6 +1157,11 @@ def main(argv=None):
         controller = CoreController(demo=args.demo)
         window = MainWindow(controller, store)
         window.show()
+        if instance is not None and getattr(instance, "wake_event", None):
+            import threading
+            from .single_instance import wait_for_wake
+            threading.Thread(target=wait_for_wake, args=(instance, window.restore_requested.emit),
+                             daemon=True, name="instance-wake").start()
         for warning in store.warnings:
             window.notify(warning, error=True)
         QTimer.singleShot(0, controller.publish_initial)

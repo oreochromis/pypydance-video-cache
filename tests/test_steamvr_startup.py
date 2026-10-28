@@ -163,16 +163,23 @@ class SingleInstanceTests(unittest.TestCase):
     def test_first_instance_holds_handle_until_close(self):
         kernel = MagicMock()
         kernel.CreateMutexW.return_value = 123
+        kernel.CreateEventW.return_value = 456
         with patch.object(single_instance.ctypes, "WinDLL", return_value=kernel, create=True), patch.object(single_instance.ctypes, "get_last_error", return_value=0, create=True):
             lease = single_instance.claim_instance()
         kernel.CloseHandle.assert_not_called()
         lease.close()
         lease.close()
-        kernel.CloseHandle.assert_called_once_with(123)
+        self.assertEqual(kernel.CloseHandle.call_count, 2)
+        kernel.CloseHandle.assert_any_call(123)
+        kernel.CloseHandle.assert_any_call(456)
 
     def test_duplicate_closes_temporary_handle(self):
         kernel = MagicMock()
         kernel.CreateMutexW.return_value = 123
+        kernel.CreateEventW.return_value = 456
         with patch.object(single_instance.ctypes, "WinDLL", return_value=kernel, create=True), patch.object(single_instance.ctypes, "get_last_error", return_value=183, create=True):
             self.assertIsNone(single_instance.claim_instance())
-        kernel.CloseHandle.assert_called_once_with(123)
+        kernel.SetEvent.assert_called_once_with(456)
+        self.assertEqual(kernel.CloseHandle.call_count, 2)
+        kernel.CloseHandle.assert_any_call(123)
+        kernel.CloseHandle.assert_any_call(456)

@@ -87,6 +87,7 @@ DEFAULT_CONFIG = {
     "cooldown_file": "",
     "bundle_direct": True,
     "vr_overlay": True,
+    "close_to_tray": False,
 }
 
 _config = {}
@@ -338,7 +339,7 @@ def _validated_config(config, *, allow_shared_storage=False):
         value = cfg.get(name)
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
             raise ValueError(f"{name} 必须是大于等于 {minimum} 的整数")
-    for name in ("enable_youtube_cache", "youtube_permanent", "cdn_permanent", "wd_permanent", "preload_sequential", "auto_prefer_cdn", "bundle_direct", "vr_overlay"):
+    for name in ("enable_youtube_cache", "youtube_permanent", "cdn_permanent", "wd_permanent", "preload_sequential", "auto_prefer_cdn", "bundle_direct", "vr_overlay", "close_to_tray"):
         if not isinstance(cfg.get(name), bool):
             raise ValueError(f"{name} 必须是布尔值")
     for name in ("cache_dir", "library_dir", "wd_library_dir", "preferred_cdn_ip", "cooldown_file"):
