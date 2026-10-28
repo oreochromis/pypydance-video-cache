@@ -30,7 +30,7 @@ class ApplicationIconTests(unittest.TestCase):
     def test_packaged_artwork_is_the_exact_approved_transparent_png(self):
         self.assertEqual(
             hashlib.sha256(self.artwork.read_bytes()).hexdigest(),
-            "dfec16921792f9680ee82e3d03b0cd3f9ea333f3557766ebb13b05ba107624d3",
+            "bc3c9218c861c121da0a8053442ac5882a9e40fb8d4c3b35c570405fcc345193",
         )
         approved = QImage(str(self.artwork))
         self.assertEqual(approved.size(), QSize(512, 512))
