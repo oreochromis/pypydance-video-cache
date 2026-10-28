@@ -20,8 +20,6 @@
 
 如果升级后仍看到之前固定的 Python 图标，请退出旧版本并打开新版 exe；已固定的旧项可先取消固定，再从新版程序重新固定。
 
-只想先看界面，可以双击 `打开演示.bat`。演示使用示例数据，不启动真实缓存服务、不修改 hosts，也不接入 VRChat。
-
 ## 相比 Fork 前更新了什么？
 
 对比基线为原项目的 [V1.2 源码提交 `5efd712`](https://github.com/oreochromis/pypydance-video-cache/tree/5efd712073d696e180ffeedfbfe51afd293f702e)，当前版本为本 Fork 的 `v3.0.1`。

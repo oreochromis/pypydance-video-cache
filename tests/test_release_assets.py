@@ -195,7 +195,7 @@ class ReleaseAssetTests(unittest.TestCase):
         text = json.dumps(info, ensure_ascii=False)
         archive = self.assets / "VRChatDanceAssistant-windows-x64.zip"
         with ZipFile(archive, "w") as zipped:
-            for name in ("_internal/python312.dll", "打开演示.bat"):
+            for name in ("_internal/python312.dll",):
                 zipped.writestr("VRChat跳舞房助手/" + name, b"tiny synthetic fixture")
             files = {
                 "VRChat跳舞房助手.exe": self.exe_bytes,
@@ -560,7 +560,7 @@ class ReleaseAssetTests(unittest.TestCase):
         bundle = self.assets / "VRChat跳舞房助手"
         for name in (
             "VRChat跳舞房助手.exe", "_internal/python312.dll", "README.md", "LICENSE",
-            "docs/DEVELOPMENT.md", "docs/WINDOWS_PREVIEW.md", "启动.bat", "打开演示.bat",
+            "docs/DEVELOPMENT.md", "docs/WINDOWS_PREVIEW.md", "启动.bat",
         ):
             target = bundle / name
             target.parent.mkdir(parents=True, exist_ok=True)

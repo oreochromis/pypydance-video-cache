@@ -1,0 +1,18 @@
+{
+  "cache_dir": "cache",
+  "library_dir": "D:\\A_Pypydance videocache\\pypydance",
+  "wd_library_dir": "",
+  "max_cache_mb": 2048,
+  "preload_count": 3,
+  "preload_sequential": true,
+  "max_parallel": 2,
+  "preferred_cdn_ip": "172.66.157.15",
+  "auto_prefer_cdn": true,
+  "enable_youtube_cache": true,
+  "youtube_permanent": true,
+  "cdn_permanent": false,
+  "wd_permanent": false,
+  "cooldown_file": "C:\\Users\\92153\\Downloads\\31835687802-1-192.mp4",
+  "bundle_direct": true,
+  "vr_overlay": true
+}

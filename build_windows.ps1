@@ -98,7 +98,7 @@ for name in ("PySide6-Essentials", "Pillow", "PyInstaller", "openvr"):
     $bundleRoot = Join-Path $projectRoot "dist\VRChat跳舞房助手"
     $bundleDocs = Join-Path $bundleRoot "docs"
     New-Item -ItemType Directory -Force -Path $bundleDocs | Out-Null
-    foreach ($fileName in @("README.md", "LICENSE", "启动.bat", "打开演示.bat")) {
+    foreach ($fileName in @("README.md", "LICENSE", "启动.bat")) {
         Copy-Item -LiteralPath (Join-Path $projectRoot $fileName) -Destination $bundleRoot
     }
     foreach ($fileName in @("requirements.txt", "requirements-dev.txt")) {

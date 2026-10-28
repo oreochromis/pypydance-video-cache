@@ -108,7 +108,7 @@ def verify_assets(assets: Path, expected_sha: str) -> tuple[dict, list[Path]]:
         if any("presets" in tuple(part.casefold() for part in Path(name.replace("\\", "/")).parts)
                for name in members):
             raise ValueError("Stable release assets must not include bundled preset resources.")
-        for path in ("VRChat跳舞房助手.exe", "_internal/python312.dll", "docs/build-info.json", "打开演示.bat"):
+        for path in ("VRChat跳舞房助手.exe", "_internal/python312.dll", "docs/build-info.json"):
             if "VRChat跳舞房助手/" + path not in members:
                 raise ValueError("The release ZIP is incomplete: " + path)
         if COOLDOWN_ARCHIVE_PATH not in members:
@@ -171,7 +171,7 @@ def notes(info: dict, checksum: str) -> str:
 
 下载下方 **VRChatDanceAssistant-windows-x64.zip**，完整解压后运行 `VRChat跳舞房助手/VRChat跳舞房助手.exe`，无需安装 Python。必须保留 `_internal` 等全部文件，其中包含默认视频；不能只复制 exe。
 
-首次使用可先双击 `打开演示.bat` 检查界面；演示不启动真实缓存服务。正常入口按 UAC 提示启动并自动开启缓存服务。程序未签名，UAC 发布者显示为未知。完整步骤见包内 `docs/WINDOWS_PREVIEW.md`。
+正常入口按 UAC 提示启动并自动开启缓存服务。程序未签名，UAC 发布者显示为未知。完整步骤见包内 `docs/WINDOWS_PREVIEW.md`。
 
 ## 本次实际验证
 

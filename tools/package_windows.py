@@ -64,7 +64,6 @@ def main() -> int:
         "docs/DEVELOPMENT.md",
         "docs/WINDOWS_PREVIEW.md",
         "启动.bat",
-        "打开演示.bat",
         "_internal/" + COOLDOWN_RELATIVE_PATH,
         "_internal/" + APP_ICON_PNG_RELATIVE_PATH,
         "_internal/" + APP_ICON_ICO_RELATIVE_PATH,
