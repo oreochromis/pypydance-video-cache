@@ -1,6 +1,6 @@
 """Desktop interface for the VRChat dance room video cache service."""
 
-__version__ = "3.8.5"
+__version__ = "3.9.0"
 
 # 预载 Qt6Svg.dll：Windows 加载 qsvg 图片插件时不会按 PySide6 目录解析其依赖，
 # 不显式 import 会导致 SVG 图标解码静默失败
