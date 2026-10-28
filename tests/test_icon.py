@@ -30,12 +30,12 @@ class ApplicationIconTests(unittest.TestCase):
     def test_packaged_artwork_is_the_exact_approved_transparent_png(self):
         self.assertEqual(
             hashlib.sha256(self.artwork.read_bytes()).hexdigest(),
-            "d530500b00d170617e1d750a90ace567ec8cb31105b8c9443189a37229075a11",
+            "dfec16921792f9680ee82e3d03b0cd3f9ea333f3557766ebb13b05ba107624d3",
         )
         approved = QImage(str(self.artwork))
-        self.assertEqual(approved.size(), QSize(1254, 1254))
+        self.assertEqual(approved.size(), QSize(512, 512))
         self.assertTrue(approved.hasAlphaChannel())
-        actual = widgets.app_icon().pixmap(1254, 1254).toImage()
+        actual = widgets.app_icon().pixmap(512, 512).toImage()
         self.assertEqual(actual, approved.convertToFormat(actual.format()))
 
     def test_icon_scales_for_windows_sizes_and_keeps_transparent_corners(self):
