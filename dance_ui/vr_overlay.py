@@ -327,6 +327,20 @@ def collect_state():
     return state
 
 
+def _describe_init_error(exc):
+    """pyopenvr 抛出的错误类 str() 为空，错误名全在类名里（error_value 是数字码）。
+    121 NoServerForBackgroundApp：vrserver 活着但没有头显提供服务（SteamVR 开着、
+    头显/串流未连接的典型状态）；108 HmdNotFound：SteamVR 未运行。"""
+    name = type(exc).__name__
+    if name == "InitError_Init_NoServerForBackgroundApp":
+        return ("VR 面板：SteamVR 已启动，但没有头显连接（Virtual Desktop 串流未连上时也是这个状态），"
+                "SteamVR 此时不接待面板程序；头显连上后面板会自动出现，无需操作")
+    if name == "InitError_Init_HmdNotFound":
+        return ("VR 面板：等待 SteamVR 就绪（若 SteamVR 已打开，请确认头显已连接 / "
+                "Virtual Desktop 串流已连上；就绪后面板自动出现）")
+    return "VR 面板：等待 SteamVR 启动（启动后自动出现，无需操作）"
+
+
 class OverlayBridge(QObject):
     """overlay 线程 -> GUI 线程的动作信号（Qt 自动排队到主线程执行）"""
 
@@ -403,7 +417,7 @@ class VROverlayService:
     # ---------------- 线程内部 ----------------
 
     def _run(self):
-        retry_logged = False
+        last_reason = None
         while not self._stop.is_set():
             try:
                 from .openvr_runtime import import_openvr
@@ -413,7 +427,7 @@ class VROverlayService:
                 return
             try:
                 openvr.init(openvr.VRApplication_Overlay)
-            except Exception:
+            except Exception as exc:
                 # pyopenvr 的 init 失败路径不做清理，而官方 VR_Init 失败时会
                 # VR_ShutdownInternal()；不补这步会让进程内 OpenVR 状态残留，
                 # SteamVR 之后启动也永远重连不上
@@ -421,17 +435,20 @@ class VROverlayService:
                     openvr.shutdown()
                 except Exception:
                     pass
-                if not retry_logged:
-                    self.logger("VR 面板：等待 SteamVR 启动（启动后自动出现，无需操作）")
-                    retry_logged = True
+                reason = _describe_init_error(exc)
+                if reason != last_reason:  # 原因变化才记日志，避免等待期间每 15 秒刷屏
+                    self.logger(reason)
+                    last_reason = reason
                 self._stop.wait(RETRY_INTERVAL)
                 continue
             try:
                 self._session(openvr)
             except Exception as exc:
                 if not self._stop.is_set():
-                    self.logger(f"VR 面板连接中断: {exc}，等待 SteamVR 后自动重连")
-                    retry_logged = False
+                    # pyopenvr 的错误 str() 为空，用类名（即错误名）兜底
+                    detail = str(exc) or type(exc).__name__
+                    self.logger(f"VR 面板连接中断: {detail}，等待 SteamVR 后自动重连")
+                    last_reason = None
             finally:
                 _set_session_active(False)
                 try:
