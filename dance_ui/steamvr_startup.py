@@ -105,7 +105,9 @@ def applications():
                 return
             yield openvr.IVRApplications()
         except Exception as exc:
-            raise RuntimeError(f"无法访问 SteamVR 启动设置，请先启动 SteamVR 后重试：{exc}") from exc
+            # pyopenvr 的错误 str() 为空，用类名（即错误名）兜底
+            detail = str(exc) or type(exc).__name__
+            raise RuntimeError(f"无法访问 SteamVR 启动设置，请先启动 SteamVR 后重试：{detail}") from exc
         finally:
             if initialized:
                 openvr.shutdownInternal()
