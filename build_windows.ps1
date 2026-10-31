@@ -82,7 +82,10 @@ for name in ("PySide6-Essentials", "Pillow", "PyInstaller", "openvr"):
     Invoke-ProjectPython -Arguments @(
         "-m", "PyInstaller",
         "--clean", "--noconfirm", "--onedir", "--windowed",
-        "--name", "VRChat跳舞房助手",
+        # exe 文件名必须纯 ASCII：vrclient 用进程名构造 vrclient_<进程名>.txt
+        # 日志路径，中文名在编码转换时失败会让 init 必报 NoLogPath（实测：
+        # 同名 exe 改纯英文名后中文目录里也能正常连接）
+        "--name", "VRChatDanceAssistant",
         "--uac-admin",
         "--icon", (Join-Path $projectRoot "assets\app-icon.ico"),
         "--distpath", (Join-Path $projectRoot "dist"),
@@ -95,7 +98,7 @@ for name in ("PySide6-Essentials", "Pillow", "PyInstaller", "openvr"):
         "dance_cache_gui.py"
     )
 
-    $bundleRoot = Join-Path $projectRoot "dist\VRChat跳舞房助手"
+    $bundleRoot = Join-Path $projectRoot "dist\VRChatDanceAssistant"
     $bundleDocs = Join-Path $bundleRoot "docs"
     New-Item -ItemType Directory -Force -Path $bundleDocs | Out-Null
     foreach ($fileName in @("README.md", "LICENSE", "启动.bat")) {
@@ -136,7 +139,7 @@ for package in ("PySide6-Essentials", "shiboken6", "Pillow", "PyInstaller", "ope
 
     Write-Host ""
     Write-Host "Bundle created: $bundleRoot"
-    Write-Host "Distribute the complete VRChat跳舞房助手 folder, including _internal."
+    Write-Host "Distribute the complete VRChatDanceAssistant folder, including _internal."
     Write-Host "The executable requests UAC elevation, including with --demo."
     Write-Host "Windows + VRChat end-to-end verification remains a separate release step."
 }

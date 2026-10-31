@@ -66,7 +66,7 @@ Windows 使用 `openvr==2.12.1401` 的公开应用接口；依赖只在 Windows 
 
 `AddApplicationManifest` 使用非临时注册，`SetApplicationAutoLaunch` 写入 SteamVR，回读确认后界面才报告成功；不在业务 config 中另存一个可能过时的开关。关闭只取消本应用的自动启动标志。注册失败尝试恢复原 manifest 和自动启动标志，恢复失败明确提示刷新检查。
 
-SteamVR 的自动启动接口要求 manifest 标记 `is_dashboard_overlay=true`，本助手仍是桌面伴随程序，不提交 VR 场景。现有 exe 需要管理员权限，manifest 通过系统 Windows PowerShell 的 `Start-Process -Verb RunAs` 启动并保留 UAC 确认；Unicode 路径使用 UTF-16 EncodedCommand，路径与参数做独立引号处理，不修改执行策略。正常 Windows 窗口持有当前会话命名 mutex；自动入口先检查已有窗口进程，避免重复授权和重复服务。演示模式不注册、不连接 SteamVR、不占用正常实例锁。
+SteamVR 的自动启动接口要求 manifest 标记 `is_dashboard_overlay=true`，本助手仍是桌面伴随程序，不提交 VR 场景。现有 exe 需要管理员权限：开启自启时（程序已是管理员）用 `schtasks /Create /XML` 注册一个**无触发器**、RunLevel=HighestAvailable 的计划任务 `VRChatDanceAssistant-SteamVR`（UTF-16 XML，支持 Unicode 路径），manifest 的 `binary_path_windows` 指向系统 `schtasks.exe`、参数为 `/Run /TN <任务名>`——SteamVR 拉起任务时全程无 UAC 弹窗。任务存 exe 绝对路径，状态检查每次都会重写任务和 manifest 以自动跟随程序搬家；关闭自启时删除任务。重复拉起由应用内单实例锁兜底（新实例唤醒已有窗口后退出）。演示模式不注册、不连接 SteamVR、不占用正常实例锁。
 
 “启动”卡片独立应用，不提交其他设置草稿；读取失败显示未知状态，保存失败保留草稿。SteamVR 关闭不退出助手。移动/升级到其他程序目录后，请先关闭该选项并应用，再重新启用以刷新启动路径。实际 SteamVR 启动、中文路径和 UAC 点击仍需在用户 Windows 机器验收。
 
@@ -74,7 +74,7 @@ API 依据：[Valve OpenVR 接口定义](https://github.com/ValveSoftware/openvr
 
 ### SteamVR 面板页
 
-`dance_ui/vr_overlay.py` 以 `VRApplication_Overlay` 长连接注册 dashboard overlay（`sharkspeare.vrchatdanceassistant.panel`），出现在 SteamVR 菜单中。纹理用 Pillow 绘制后经 `SetOverlayRaw` 提交 RGBA 字节，不依赖 OpenGL 上下文；缩略图用 `SetOverlayFromFile` 指向 `assets/app-icon.png`。输入走 `VROverlayInputMethod_Mouse`，控制器激光映射为鼠标事件（坐标 0-1，y 原点在下），按钮命中测试在渲染坐标系完成，动作经 Qt 信号排队回 GUI 线程。SteamVR 未运行时 15 秒间隔静默重试，断连自动重连；overlay 会话存活期间“跟随 SteamVR 启动”的短连接复用同一会话。面板内容 1 秒刷新一次。实际显示效果与激光交互只能在 VR 环境验收。
+VR 面板会话运行在独立子进程中（`dance_ui/vr_panel_worker.py`，由 `dance_ui/vr_overlay.py` 的 `VROverlayService` 监管），架构参考 OpenVR-SpaceCalibrator 的“单进程单会话、绝不重连”原则：子进程以 `VRApplication_Overlay` 初始化一次，注册 dashboard overlay（`sharkspeare.vrchatdanceassistant.panel`），出现在 SteamVR 菜单中；OpenVR 会话不可恢复地损坏（access violation 等）时只退出子进程，父进程拉一个全新子进程获得干净的 vrclient，主进程不受影响。父子进程走回环 TCP JSON 行协议（端口与令牌经环境变量传入，hello 鉴权）：父→子下发状态/通知/停止，子→父上报日志/点击动作/可见性/init-error。子进程在主线程创建 `QGuiApplication` 并优先用 OpenGL 上传纹理（失败回退 `SetOverlayRaw`）；纹理由 Pillow 绘制，缩略图用 `SetOverlayFromFile` 指向 `assets/app-icon.png`。输入走 `VROverlayInputMethod_Mouse`，控制器激光映射为鼠标事件（坐标 0-1，y 原点在下），按钮命中测试在渲染坐标系完成，动作经回环通道回父进程再排队进 GUI 线程。SteamVR 未运行时按 15 秒间隔拉起子进程探测（init-error 退出码 2）；子进程崩溃时，存活超过 120 秒视为健康会话、自动重拉且不计配额，否则计入 10 分钟 3 次的崩溃配额，超限停止自动拉起（重开开关或重启软件重置）。面板内容每秒推送一次（去重，隐藏时暂停）。子进程异常输出记录在本机状态目录的 `vr-panel-worker.log`。实际显示效果与激光交互只能在 VR 环境验收。
 
 ### 常用 CDN 收藏
 
@@ -143,14 +143,14 @@ Cool Down 表达已配置、待命、已触发等阶段，只替换本机画面�
 不指定 Python 时，脚本优先使用项目内 `.venv\Scripts\python.exe`，否则使用 PATH 中的 `python`。它验证平台和 Python 版本，使用如下打包形式：
 
 ```powershell
-python -m PyInstaller --clean --noconfirm --onedir --windowed --name VRChat跳舞房助手 --uac-admin dance_cache_gui.py
+python -m PyInstaller --clean --noconfirm --onedir --windowed --name VRChatDanceAssistant --uac-admin dance_cache_gui.py
 ```
 
-实际脚本将生成物限定在项目 `build` 与 `dist`，并复制 README、MIT 许可、开发说明和可发现的第三方声明。仓库原有的 `VRChat PyPyDance助手.spec` 已更替为 `VRChat跳舞房助手` 的 onedir 产物；推荐使用脚本统一收集随包文档。
+实际脚本将生成物限定在项目 `build` 与 `dist`，并复制 README、MIT 许可、开发说明和可发现的第三方声明。仓库原有的 `VRChat PyPyDance助手.spec` 已更替为 `VRChatDanceAssistant` 的 onedir 产物；推荐使用脚本统一收集随包文档。
 
 ### 分发约束
 
-- 启动文件：`dist\VRChat跳舞房助手\VRChat跳舞房助手.exe`。
+- 启动文件：`dist\VRChatDanceAssistant\VRChatDanceAssistant.exe`（exe 文件名必须纯 ASCII：vrclient 用进程名构造日志文件路径，中文名转换失败会让 init 必报 NoLogPath）。
 - 分发完整目录，包括 `_internal`，不能单独复制 exe。
 - `--uac-admin` 会让打包版每次启动请求提权，包括 `--demo`。从源码运行演示无需因为缓存服务申请提权。
 - 不打包“小余12主题”、个人背景、配置或视频。发布验证会拒绝意外夹带的预置主题资源。
@@ -164,7 +164,7 @@ python -m PyInstaller --clean --noconfirm --onedir --windowed --name VRChat跳�
 `.github/workflows/windows-preview.yml` 在 `ui-redesign` 或 `main` 推送后使用原生 Windows x64 / Python 3.12 构建。完整隔离测试必须零失败、零错误、零跳过，随后运行打包后的 exe：
 
 ```powershell
-.\dist\VRChat跳舞房助手\VRChat跳舞房助手.exe --demo --state-dir TEMP_PATH --smoke-test-report REPORT_PATH
+.\dist\VRChatDanceAssistant\VRChatDanceAssistant.exe --demo --state-dir TEMP_PATH --smoke-test-report REPORT_PATH
 ```
 
 该自动检查参数仅与 `--demo` 一起使用，检查四页导航、SVG 资源、默认浅蓝主题及使用临时合成图片的 Pillow 到 Qt 背景渲染，写 JSON 后自动退出。报告必须确认 `win32`、Qt `windows` 平台和 `frozen=true`，才能由 `tools/package_windows.py` 生成完整目录 ZIP、SHA-256 及构建信息。实际报告也保存在包内 `docs/build-info.json`。

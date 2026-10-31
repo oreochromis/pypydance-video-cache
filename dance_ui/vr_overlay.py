@@ -1,11 +1,25 @@
 """SteamVR 仪表盘 overlay：在 SteamVR 菜单里显示助手页面。
 
-出现在 SteamVR 菜单（dashboard overlay + 缩略图）、显示当前歌曲与缓存状态、
+架构：面板会话跑在独立子进程（vr_panel_worker）里，本模块是父进程监管层。
+vrclient 的进程内状态损坏（失败 init 静态缓存、vrserver 死亡后接口指针失效）
+和 ctypes 访问冲突都只影响子进程——父进程拉起全新子进程即恢复，主程序的
+缓存服务与 hosts 劫持完全不受影响。
+
+子进程 crash 重启有配额（AutoRestartBudget）：存活不足 HEALTHY_SESSION_SECONDS
+的连续崩溃计次，超限停止自动拉起；存活够久后崩溃说明是 SteamVR 侧问题，不计次。
+面板出现在 SteamVR 菜单（dashboard overlay + 缩略图）、显示当前歌曲与缓存状态、
 接收控制器激光的鼠标事件（启停服务 + CoolDown 两个按钮）。
-纹理优先用常驻 OpenGL 纹理原地更新（不闪烁），GL 不可用时回退 setOverlayRaw。
-SteamVR 未运行时按 15 秒间隔静默重试连接；运行中 SteamVR 退出会自动回到重试。"""
+纹理优先用常驻 OpenGL 纹理原地更新（不闪烁，在子进程主线程创建，符合 Qt 线程约束），
+GL 不可用时回退 setOverlayRaw。SteamVR 未运行时子进程报 init-error 退出，
+父进程按 15 秒间隔拉起新子进程重试。"""
 from __future__ import annotations
 
+import json
+import os
+import secrets
+import socket
+import subprocess
+import sys
 import threading
 import time
 
@@ -20,28 +34,48 @@ TEXTURE_W, TEXTURE_H = 1024, 640
 WIDTH_METERS = 1.5
 RENDER_INTERVAL = 1.0   # 状态纹理刷新间隔（秒）
 RETRY_INTERVAL = 15.0   # SteamVR 未运行时的重连间隔（秒）
-
-_session_lock = threading.Lock()
-_session_active = False   # 本进程持有长生命周期的 OpenVR overlay 会话
-
-
-def active_applications():
-    """overlay 会话存活时返回 IVRApplications 接口，供启动设置复用同一会话；
-    无会话时返回 None（调用方走自己的短连接）。"""
-    with _session_lock:
-        if not _session_active:
-            return None
-    try:
-        import openvr
-        return openvr.IVRApplications()
-    except Exception:
-        return None
+AUTO_RESTART_LIMIT = 3      # 进程内 OpenVR 损坏时的自动重启次数上限……
+AUTO_RESTART_WINDOW = 600.0  # ……在该时间窗（秒）内计次，防 SteamVR 反复崩溃导致无限重启循环
+HEALTHY_SESSION_SECONDS = 120.0  # 会话存活超过该时长才算"健康"，清掉自动重启计次
 
 
-def _set_session_active(value):
-    global _session_active
-    with _session_lock:
-        _session_active = value
+class AutoRestartBudget:
+    """自动重启配额（跨进程持久化）：时间窗内最多 LIMIT 次，超限改为提示手动重启。
+    会话成功建立后 reset——配额只惩罚"连续起不来"，正常使用的历史不计。"""
+
+    def __init__(self, path):
+        self._path = path
+
+    def _read(self):
+        try:
+            import json
+            data = json.loads(self._path.read_text(encoding="utf-8"))
+            return [float(t) for t in data.get("restarts", [])]
+        except Exception:
+            return []
+
+    def _write(self, restarts):
+        try:
+            import json
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(json.dumps({"restarts": restarts}), encoding="utf-8")
+        except OSError:
+            pass
+
+    def allow(self):
+        now = time.time()
+        restarts = [t for t in self._read() if now - t < AUTO_RESTART_WINDOW]
+        if len(restarts) >= AUTO_RESTART_LIMIT:
+            return False
+        restarts.append(now)
+        self._write(restarts)
+        return True
+
+    def reset(self):
+        try:
+            self._path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 _font_cache = {}
@@ -327,40 +361,191 @@ def collect_state():
     return state
 
 
-def _describe_init_error(exc):
-    """pyopenvr 抛出的错误类 str() 为空，错误名全在类名里（error_value 是数字码）。
+def _describe_error_name(name):
+    """按 openvr 错误名（异常类名）生成等待提示。pyopenvr 抛出的错误类 str() 为空，
+    错误名全在类名里（error_value 是数字码）。
     121 NoServerForBackgroundApp：vrserver 活着但没有头显提供服务（SteamVR 开着、
     头显/串流未连接的典型状态）；108 HmdNotFound：SteamVR 未运行。"""
-    name = type(exc).__name__
     if name == "InitError_Init_NoServerForBackgroundApp":
         return ("VR 面板：SteamVR 已启动，但没有头显连接（Virtual Desktop 串流未连上时也是这个状态），"
                 "SteamVR 此时不接待面板程序；头显连上后面板会自动出现，无需操作")
     if name == "InitError_Init_HmdNotFound":
         return ("VR 面板：等待 SteamVR 就绪（若 SteamVR 已打开，请确认头显已连接 / "
                 "Virtual Desktop 串流已连上；就绪后面板自动出现）")
-    return "VR 面板：等待 SteamVR 启动（启动后自动出现，无需操作）"
+    if name == "InitError_Init_NoLogPath":
+        from .openvr_runtime import describe_probe_error
+        return "VR 面板：" + describe_probe_error(name)
+    if name and name.startswith("Probe"):
+        return "VR 面板：等待 SteamVR 就绪（连接检测未通过，继续等待）"
+    # 未知错误也必须把名字带出来，否则无法诊断（3.9.3 的 NoLogPath 就被旧兜底吞了）
+    return f"VR 面板：等待 SteamVR 启动（{name or '未知错误'}），启动后自动出现"
+
+
+def _describe_init_error(exc):
+    return _describe_error_name(type(exc).__name__)
 
 
 class OverlayBridge(QObject):
-    """overlay 线程 -> GUI 线程的动作信号（Qt 自动排队到主线程执行）"""
+    """面板线程 -> GUI 线程的动作信号（Qt 自动排队到主线程执行）"""
 
     action_requested = Signal(str)
 
 
-class VROverlayService:
-    """SteamVR 面板页生命周期管理。start/stop 幂等，线程内自处理 SteamVR 断连重试。"""
+WORKER_CLOSED = object()   # readline 哨兵：子进程连接断开
+STATE_PUSH_INTERVAL = 1.0  # 状态变化检查/推送间隔（秒）
 
-    def __init__(self, bridge=None, state_provider=None, logger=None, gl_upload=True):
+
+class WorkerHandle:
+    """真实子进程句柄：拉起 exe/-m 模块，回环 TCP + JSON 行协议通信。
+
+    stderr 重定向到状态目录的 vr-panel-worker.log（硬崩溃如访问冲突时 Python
+    层收不到任何信息，stderr 是唯一线索）。连接带 token 鉴权，防本机其他
+    进程误连。"""
+
+    def __init__(self, proc, listener, token, stderr_file):
+        self._proc = proc
+        self._listener = listener
+        self._token = token
+        self._stderr_file = stderr_file
+        self._conn = None
+        self._buf = ""
+        self._send_lock = threading.Lock()
+        self.authenticated = False
+
+    @classmethod
+    def spawn(cls, log_dir=None):
+        from . import vr_panel_worker
+        listener = socket.socket()
+        try:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+        except OSError:
+            listener.close()
+            raise
+        port = listener.getsockname()[1]
+        token = secrets.token_hex(16)
+        command, env = vr_panel_worker.worker_command()
+        env[vr_panel_worker.ENV_PORT] = str(port)
+        env[vr_panel_worker.ENV_TOKEN] = token
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+        stderr = subprocess.DEVNULL
+        stderr_file = None
+        if log_dir is not None:
+            try:
+                os.makedirs(log_dir, exist_ok=True)
+                stderr_file = open(os.path.join(log_dir, "vr-panel-worker.log"), "wb")
+                stderr = stderr_file
+            except OSError:
+                stderr_file = None
+        try:
+            proc = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=stderr,
+                                    creationflags=creationflags)
+        except Exception:
+            listener.close()
+            if stderr_file is not None:
+                stderr_file.close()
+            raise
+        return cls(proc, listener, token, stderr_file)
+
+    def poll(self):
+        return self._proc.poll()
+
+    def send(self, obj):
+        conn = self._conn
+        if conn is None:
+            raise OSError("worker 尚未连接")
+        data = (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
+        with self._send_lock:
+            conn.sendall(data)
+
+    def readline(self, timeout):
+        """下一条消息；超时返回 None；连接断开/鉴权失败返回 WORKER_CLOSED。"""
+        deadline = time.monotonic() + timeout
+        while True:
+            if "\n" in self._buf:
+                line, self._buf = self._buf.split("\n", 1)
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    continue
+                if msg.get("type") == "hello":
+                    # 首行鉴权：token 不符的连接直接掐断
+                    if msg.get("token") != self._token:
+                        return WORKER_CLOSED
+                    self.authenticated = True
+                    continue
+                return msg
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            if self._conn is None:
+                if self._proc.poll() is not None:
+                    return WORKER_CLOSED   # 还没连上就退出了
+                self._listener.settimeout(remaining)
+                try:
+                    self._conn, _ = self._listener.accept()
+                except socket.timeout:
+                    return None
+                except OSError:
+                    return WORKER_CLOSED
+                continue
+            self._conn.settimeout(remaining)
+            try:
+                data = self._conn.recv(65536)
+            except socket.timeout:
+                return None
+            except OSError:
+                return WORKER_CLOSED
+            if not data:
+                return WORKER_CLOSED
+            self._buf += data.decode("utf-8", "replace")
+
+    def close(self, grace=3.0):
+        """先发 stop 让子进程干净退出（销毁 overlay、VR_Shutdown），超时强杀。"""
+        try:
+            self.send({"type": "stop"})
+        except OSError:
+            pass
+        deadline = time.monotonic() + grace
+        while self._proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+            except OSError:
+                pass
+        for conn in (self._conn, self._listener):
+            if conn is not None:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+        if self._stderr_file is not None:
+            try:
+                self._stderr_file.close()
+            except OSError:
+                pass
+
+
+class VROverlayService:
+    """VR 面板监管：按需拉起/回收面板子进程，线程内自处理重试与崩溃重启。
+
+    会话本体在子进程（vr_panel_worker）：vrclient 的进程内状态损坏、ctypes
+    访问冲突、GL 崩溃都只影响子进程，父进程拉新子进程即可恢复，主程序
+    （缓存服务/hosts 劫持）完全不受影响。"""
+
+    def __init__(self, bridge=None, state_provider=None, logger=None,
+                 restart_state_path=None, worker_factory=None):
         self.bridge = bridge or OverlayBridge()
         self.state_provider = state_provider or collect_state
         self.logger = logger or self._default_logger
-        self._gl_upload = gl_upload
+        self._restart_budget = AutoRestartBudget(restart_state_path) if restart_state_path else None
+        self._worker_factory = worker_factory  # 测试注入；None 用真实子进程
         self._stop = threading.Event()
         self._thread = None
-        self._hover = None   # 当前激光悬停的按钮 action id
-        self._force_render = False   # 按钮动作后强制下一帧立即重绘，让标签即时刷新
-        self._visible = True   # OverlayShown/Hidden 驱动；默认可见保证首帧能渲染
-        self._notice = None   # (文本, 过期时间戳)，面板上的临时操作反馈
+        self._notice = None   # (文本, 过期时间戳)，父进程侧推给面板的临时反馈
+        self._visible = True   # 子进程 visibility 消息驱动；默认可见保证首轮推送状态
 
     @staticmethod
     def _default_logger(message):
@@ -373,6 +558,9 @@ class VROverlayService:
     def start(self):
         if self._thread is not None and self._thread.is_alive():
             return
+        # 手动开启/重开面板 = 用户明确意图，清掉崩溃计次
+        if self._restart_budget is not None:
+            self._restart_budget.reset()
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True, name="vr-overlay")
         self._thread.start()
@@ -389,7 +577,6 @@ class VROverlayService:
     def _set_notice(self, text, duration=4.0):
         """面板上显示一条临时反馈（操作结果/失败原因），到期自动消失"""
         self._notice = (text, time.time() + duration)
-        self._force_render = True
 
     def _current_notice(self):
         if not self._notice:
@@ -401,165 +588,117 @@ class VROverlayService:
         return text
 
     def _cooldown_ready(self):
-        """VR 端点 CoolDown 前预检，失败时给面板提示并拦下指令（桌面端只会写日志，VR 里看不见）"""
+        """VR 端点 CoolDown 前预检，返回 (是否放行, 拦截原因)"""
         try:
             import dance_cache as core
             if not core.get_cooldown_state().get("available"):
-                self._set_notice("未设置放松视频，请在桌面端「设置」页选择")
-                return False
+                return False, "未设置放松视频，请在桌面端「设置」页选择"
             if not core.is_running():
-                self._set_notice("缓存服务未运行，请先启动服务")
-                return False
+                return False, "缓存服务未运行，请先启动服务"
         except Exception:
             pass   # 核心不可用时不拦截，交给桌面端报错
-        return True
+        return True, None
 
     # ---------------- 线程内部 ----------------
+
+    def _spawn_worker(self):
+        if self._worker_factory is not None:
+            return self._worker_factory()
+        log_dir = None
+        if self._restart_budget is not None:
+            log_dir = str(self._restart_budget._path.parent)
+        return WorkerHandle.spawn(log_dir)
 
     def _run(self):
         last_reason = None
         while not self._stop.is_set():
             try:
-                from .openvr_runtime import import_openvr
-                openvr = import_openvr(self.logger)
-            except (ImportError, OSError) as exc:
-                self.logger(f"VR 面板不可用（缺少 OpenVR 依赖）: {exc}")
-                return
-            try:
-                openvr.init(openvr.VRApplication_Overlay)
+                worker = self._spawn_worker()
             except Exception as exc:
-                # pyopenvr 的 init 失败路径不做清理，而官方 VR_Init 失败时会
-                # VR_ShutdownInternal()；不补这步会让进程内 OpenVR 状态残留，
-                # SteamVR 之后启动也永远重连不上
-                try:
-                    openvr.shutdown()
-                except Exception:
-                    pass
-                reason = _describe_init_error(exc)
-                if reason != last_reason:  # 原因变化才记日志，避免等待期间每 15 秒刷屏
+                self.logger(f"VR 面板进程拉起失败: {exc}")
+                self._stop.wait(RETRY_INTERVAL)
+                continue
+            started_at = time.time()
+            outcome, detail = self._talk(worker)
+            worker.close()
+            if self._stop.is_set():
+                break
+            if outcome == "init-error":
+                # SteamVR 未就绪：子进程 init 失败后已退出（其进程内的 vrclient
+                # 毒化随之消失），父进程稍后拉起全新子进程重试
+                reason = _describe_error_name(detail)
+                if reason != last_reason:  # 原因变化才记日志，避免等待期间刷屏
                     self.logger(reason)
                     last_reason = reason
                 self._stop.wait(RETRY_INTERVAL)
                 continue
-            try:
-                self._session(openvr)
-            except Exception as exc:
-                if not self._stop.is_set():
-                    # pyopenvr 的错误 str() 为空，用类名（即错误名）兜底
-                    detail = str(exc) or type(exc).__name__
-                    self.logger(f"VR 面板连接中断: {detail}，等待 SteamVR 后自动重连")
-                    last_reason = None
-            finally:
-                _set_session_active(False)
-                try:
-                    openvr.shutdown()
-                except Exception:
-                    pass
+            # crash：子进程异常退出（含访问冲突等硬崩溃，Python 层根本收不到异常）
+            last_reason = None
+            if (self._restart_budget is not None
+                    and time.time() - started_at >= HEALTHY_SESSION_SECONDS):
+                # 存活够久才崩 = 正常运行后 SteamVR 侧出问题，不计入崩溃配额
+                self._restart_budget.reset()
+            if self._restart_budget is not None and not self._restart_budget.allow():
+                self.logger("VR 面板进程连续崩溃，已停止自动拉起"
+                            "（重开「SteamVR 面板页」开关或重启软件可重试）")
+                return
+            self.logger(f"VR 面板进程异常退出（代码 {detail}），正在重新拉起…")
+            self._stop.wait(1.0)
         self.logger("VR 面板已关闭")
 
-    def _session(self, openvr):
-        overlay = openvr.IVROverlay()
-        handle = thumbnail = uploader = None
-        try:
-            handle, thumbnail = overlay.createDashboardOverlay(PANEL_KEY, PANEL_NAME)
-            overlay.setOverlayWidthInMeters(handle, WIDTH_METERS)
-            overlay.setOverlayInputMethod(handle, openvr.VROverlayInputMethod_Mouse)
-            from pathlib import Path
-            icon_path = Path(__file__).resolve().parents[1] / "assets" / "app-icon.png"
-            if icon_path.is_file():
-                overlay.setOverlayFromFile(thumbnail, str(icon_path))
-            _set_session_active(True)
-            self.logger("VR 面板已注册：打开 SteamVR 菜单即可看到「VRChat 跳舞房助手」页面")
-            uploader = None
-            if self._gl_upload:
+    def _talk(self, worker):
+        """陪伴一个子进程的生命周期：转发消息、推状态。
+        返回 ("stop"|"init-error"|"crash", detail)。"""
+        last_push = 0.0
+        last_payload = None
+        init_error = None
+        while not self._stop.is_set():
+            msg = worker.readline(timeout=0.2)
+            if msg is WORKER_CLOSED:
+                code = worker.poll()
+                if init_error is not None:
+                    return "init-error", init_error
+                return "crash", code
+            if msg is not None:
+                mtype = msg.get("type")
+                if mtype == "log":
+                    self.logger(msg.get("message") or "")
+                elif mtype == "action":
+                    self._handle_action(worker, msg.get("action"))
+                elif mtype == "visibility":
+                    self._visible = bool(msg.get("visible"))
+                    last_payload = None  # 重新可见时强制推一次最新状态
+                elif mtype == "init-error":
+                    init_error = msg.get("error")
+            now = time.time()
+            if self._visible and now - last_push >= STATE_PUSH_INTERVAL:
+                last_push = now
                 try:
-                    uploader = _GLTextureUploader()
-                except Exception as exc:
-                    self.logger(f"VR 面板 GPU 纹理通道不可用，回退兼容模式（画面更新时可能闪烁）: {exc}")
-            event = openvr.VREvent_t()
-            last_render = 0.0
-            last_hover = None
-            last_pixels = None
-            while not self._stop.is_set():
-                self._poll_events(openvr, overlay, handle, event, y_origin_top=uploader is not None)
-                now = time.time()
-                # 状态 1 秒一刷；悬停按钮变化或按钮动作后立即重绘一次。
-                # 不做光标跟随式高频重绘：软件渲染做不到流畅跟随；
-                # 激光落点由 SteamVR 自己的光点指示
-                interactive = self._hover != last_hover or self._force_render
-                # 面板隐藏（SteamVR 菜单未打开）时跳过渲染与状态采集，省 CPU 和磁盘 stat
-                if self._visible and (now - last_render >= RENDER_INTERVAL or interactive):
-                    last_render = now
-                    last_hover = self._hover
-                    self._force_render = False
                     state = self.state_provider()
-                    state["hover"] = self._hover
-                    state["message"] = self._current_notice()
-                    pixels = render_panel(state)
-                    # 像素没变就跳过上传，空闲时完全不打扰合成器
-                    if pixels != last_pixels:
-                        last_pixels = pixels
-                        if uploader is not None:
-                            uploader.upload(openvr, overlay, handle, pixels)
-                        else:
-                            overlay.setOverlayRaw(handle, _as_pixel_buffer(pixels),
-                                                  TEXTURE_W, TEXTURE_H, 4)
-                self._stop.wait(0.05)
-        finally:
-            if uploader is not None:
-                uploader.close()
-            if handle is not None:
-                try:
-                    overlay.destroyOverlay(handle)
                 except Exception:
-                    pass
-            if thumbnail is not None:
+                    state = {}
+                state["message"] = self._current_notice()
                 try:
-                    overlay.destroyOverlay(thumbnail)
-                except Exception:
-                    pass
+                    payload = json.dumps(state, ensure_ascii=False, sort_keys=True)
+                except (TypeError, ValueError):
+                    payload = None
+                if payload is not None and payload != last_payload:
+                    try:
+                        worker.send({"type": "state", "data": state})
+                        last_payload = payload
+                    except OSError:
+                        pass  # 连接断了，下一轮 readline 会报 WORKER_CLOSED
+        return "stop", None
 
-    def _poll_events(self, openvr, overlay, handle, event, y_origin_top=False):
-        while True:
-            polled = overlay.pollNextOverlayEvent(handle, event)
-            # pyopenvr 的 pollNextOverlayEvent 返回 (result, event) 元组而不是 bool，
-            # 元组恒为真，直接 while 会无限空转，渲染永远轮不到（面板全透明的根因）
-            has_event = polled[0] if isinstance(polled, tuple) else bool(polled)
-            if not has_event:
+    def _handle_action(self, worker, action):
+        if not action:
+            return
+        if action == "cooldown":
+            ready, reason = self._cooldown_ready()
+            if not ready:
+                try:
+                    worker.send({"type": "notice", "message": reason})
+                except OSError:
+                    pass
                 return
-            etype = event.eventType
-            mouse = getattr(event.data, "mouse", None)
-            if etype == getattr(openvr, "VREvent_FocusLeave", 304):
-                # 激光移出面板：清掉悬停高亮，否则会一直残留
-                self._hover = None
-            elif etype == getattr(openvr, "VREvent_OverlayShown", 500):
-                self._visible = True
-                self._force_render = True
-            elif etype == getattr(openvr, "VREvent_OverlayHidden", 501):
-                self._visible = False
-            elif etype == getattr(openvr, "VREvent_MouseMove", 300) and mouse is not None:
-                self._hover = hit_test(mouse.x, mouse.y, y_origin_top)[0]
-            elif etype == getattr(openvr, "VREvent_MouseButtonDown", 301) and mouse is not None:
-                if getattr(mouse, "button", None) != getattr(openvr, "VRMouseButton_Left", 1):
-                    continue
-                action, px, py = hit_test(mouse.x, mouse.y, y_origin_top)
-                self._hover = action
-                # 校准日志：原始坐标 -> 换算像素 -> 命中结果，用于核对坐标映射是否准确
-                self.logger(f"VR 点击: 原始 ({mouse.x:.4f}, {mouse.y:.4f}) "
-                            f"cursor={getattr(mouse, 'cursorIndex', '?')} "
-                            f"-> 像素 ({px:.0f}, {py:.0f}) -> 命中 {action or '空白'}")
-                if action:
-                    if action == "cooldown":
-                        if not self._cooldown_ready():
-                            continue
-                        self._set_notice("CoolDown 状态已切换")
-                    elif action == "toggle_service":
-                        try:
-                            import dance_cache as core
-                            text = "正在停止服务…" if core.is_running() else "正在启动服务…"
-                        except Exception:
-                            text = "已发送启停指令"
-                        self._set_notice(text)
-                    self._force_render = True
-                    self.logger(f"VR 面板触发操作: {action}")
-                    self.bridge.action_requested.emit(action)
+        self.bridge.action_requested.emit(action)

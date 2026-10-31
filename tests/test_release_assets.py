@@ -196,9 +196,9 @@ class ReleaseAssetTests(unittest.TestCase):
         archive = self.assets / "VRChatDanceAssistant-windows-x64.zip"
         with ZipFile(archive, "w") as zipped:
             for name in ("_internal/python312.dll",):
-                zipped.writestr("VRChat跳舞房助手/" + name, b"tiny synthetic fixture")
+                zipped.writestr("VRChatDanceAssistant/" + name, b"tiny synthetic fixture")
             files = {
-                "VRChat跳舞房助手.exe": self.exe_bytes,
+                "VRChatDanceAssistant.exe": self.exe_bytes,
                 "_internal/" + resources.COOLDOWN_RELATIVE_PATH: self.cooldown_bytes,
                 "_internal/" + resources.APP_ICON_PNG_RELATIVE_PATH: self.icon_png,
                 "_internal/" + resources.APP_ICON_ICO_RELATIVE_PATH: self.icon_ico,
@@ -206,8 +206,8 @@ class ReleaseAssetTests(unittest.TestCase):
             files.update(extra_files or {})
             for name, contents in files.items():
                 if contents is not None:
-                    zipped.writestr("VRChat跳舞房助手/" + name, contents)
-            zipped.writestr("VRChat跳舞房助手/docs/build-info.json", text)
+                    zipped.writestr("VRChatDanceAssistant/" + name, contents)
+            zipped.writestr("VRChatDanceAssistant/docs/build-info.json", text)
         (self.assets / "build-info.json").write_text(text, encoding="utf-8")
         (self.assets / (archive.name + ".sha256")).write_text(
             publisher.digest(archive) + "  " + archive.name + "\n", encoding="ascii",
@@ -271,7 +271,7 @@ class ReleaseAssetTests(unittest.TestCase):
             ("_internal/" + resources.APP_ICON_PNG_RELATIVE_PATH, None),
             ("_internal/" + resources.APP_ICON_PNG_RELATIVE_PATH, self.icon_png[:-1]),
             ("_internal/" + resources.APP_ICON_ICO_RELATIVE_PATH, b"stock icon"),
-            ("VRChat跳舞房助手.exe", b"MZ" + b"\0" * 1024),
+            ("VRChatDanceAssistant.exe", b"MZ" + b"\0" * 1024),
         ):
             with self.subTest(path=path):
                 self.write_assets(extra_files={path: data})
@@ -283,7 +283,7 @@ class ReleaseAssetTests(unittest.TestCase):
         replaced = self.exe_bytes.replace(frame, b"\0" * len(frame), 1)
         with self.assertRaisesRegex(ValueError, "does not embed"):
             describe_embedded_icon(replaced, self.icon_ico)
-        self.write_assets(extra_files={"VRChat跳舞房助手.exe": replaced})
+        self.write_assets(extra_files={"VRChatDanceAssistant.exe": replaced})
         with self.assertRaisesRegex(ValueError, "does not embed"):
             publisher.verify_assets(self.assets, self.SHA)
         with self.assertRaisesRegex(ValueError, "exactly one"):
@@ -557,9 +557,9 @@ class ReleaseAssetTests(unittest.TestCase):
             gh.assert_not_called()
 
     def test_packager_excludes_presets_and_records_user_feedback_separately(self):
-        bundle = self.assets / "VRChat跳舞房助手"
+        bundle = self.assets / "VRChatDanceAssistant"
         for name in (
-            "VRChat跳舞房助手.exe", "_internal/python312.dll", "README.md", "LICENSE",
+            "VRChatDanceAssistant.exe", "_internal/python312.dll", "README.md", "LICENSE",
             "docs/DEVELOPMENT.md", "docs/WINDOWS_PREVIEW.md", "启动.bat",
         ):
             target = bundle / name
@@ -570,7 +570,7 @@ class ReleaseAssetTests(unittest.TestCase):
         (bundle / "_internal" / resources.COOLDOWN_RELATIVE_PATH).write_bytes(self.cooldown_bytes)
         (bundle / "_internal" / resources.APP_ICON_PNG_RELATIVE_PATH).write_bytes(self.icon_png)
         (bundle / "_internal" / resources.APP_ICON_ICO_RELATIVE_PATH).write_bytes(self.icon_ico)
-        (bundle / "VRChat跳舞房助手.exe").write_bytes(self.exe_bytes)
+        (bundle / "VRChatDanceAssistant.exe").write_bytes(self.exe_bytes)
         reports = self.assets / "reports"
         reports.mkdir()
         for name, value in (

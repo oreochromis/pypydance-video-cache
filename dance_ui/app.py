@@ -139,9 +139,23 @@ class MainWindow(QMainWindow, Pages):
         # SteamVR 面板页：仅真机 Windows 启用；跟随配置热启停
         if os.name == "nt" and not controller.demo:
             from . import vr_overlay
-            self._vr_overlay = vr_overlay.VROverlayService()
+            self._vr_overlay = vr_overlay.VROverlayService(
+                restart_state_path=store.root_dir / "vr-auto-restart.json")
             self._vr_overlay.bridge.action_requested.connect(self._on_vr_action)
             QTimer.singleShot(0, self._sync_vr_overlay)
+            QTimer.singleShot(0, self._warn_non_ascii_install_path)
+
+    def _warn_non_ascii_install_path(self):
+        # exe 文件名含中文时 vrclient 无法用它构造日志路径，OpenVR init 必报
+        # NoLogPath（VR 面板、跟随 SteamVR 启动都不可用），启动时就用常驻
+        # 横幅+日志明确告知，而不是等用户自己发现面板不出现
+        from .openvr_runtime import non_ascii_exe_name
+        location = non_ascii_exe_name()
+        if location:
+            self.notify(
+                f"程序的 exe 文件名包含中文（{os.path.basename(location)}），SteamVR 客户端库"
+                f"无法用中文进程名写日志，VR 面板将无法连接。请把 exe 重命名为纯英文后重新启动。",
+                error=True)
 
     def build_header(self, outer):
         header = QWidget()

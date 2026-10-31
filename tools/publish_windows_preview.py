@@ -108,23 +108,23 @@ def verify_assets(assets: Path, expected_sha: str) -> tuple[dict, list[Path]]:
         if any("presets" in tuple(part.casefold() for part in Path(name.replace("\\", "/")).parts)
                for name in members):
             raise ValueError("Stable release assets must not include bundled preset resources.")
-        for path in ("VRChat跳舞房助手.exe", "_internal/python312.dll", "docs/build-info.json"):
-            if "VRChat跳舞房助手/" + path not in members:
+        for path in ("VRChatDanceAssistant.exe", "_internal/python312.dll", "docs/build-info.json"):
+            if "VRChatDanceAssistant/" + path not in members:
                 raise ValueError("The release ZIP is incomplete: " + path)
         if COOLDOWN_ARCHIVE_PATH not in members:
             raise ValueError("The release ZIP is missing the bundled cooldown video.")
         if validate_cooldown_bytes(zipped.read(COOLDOWN_ARCHIVE_PATH)) != source_video:
             raise ValueError("The release ZIP cooldown video differs from the approved source video.")
-        paths = ["VRChat跳舞房助手/_internal/" + path for path in (APP_ICON_PNG_RELATIVE_PATH, APP_ICON_ICO_RELATIVE_PATH)]
+        paths = ["VRChatDanceAssistant/_internal/" + path for path in (APP_ICON_PNG_RELATIVE_PATH, APP_ICON_ICO_RELATIVE_PATH)]
         if not all(path in members for path in paths):
             raise ValueError("The release ZIP is missing application icon resources.")
         if validate_app_icon_bytes(*(zipped.read(path) for path in paths)) != source_icons:
             raise ValueError("The release ZIP application icons differ from the approved source icons.")
         if describe_embedded_icon(
-            zipped.read("VRChat跳舞房助手/VRChat跳舞房助手.exe"), zipped.read(paths[1]),
+            zipped.read("VRChatDanceAssistant/VRChatDanceAssistant.exe"), zipped.read(paths[1]),
         ) != info["windows_executable_icon"]:
             raise ValueError("The release executable icon differs from the tested Windows executable.")
-        if json.loads(zipped.read("VRChat跳舞房助手/docs/build-info.json")) != info:
+        if json.loads(zipped.read("VRChatDanceAssistant/docs/build-info.json")) != info:
             raise ValueError("The bundled and attached build reports differ.")
     return info, [archive, checksum, info_path]
 
@@ -165,11 +165,11 @@ def notes(info: dict, checksum: str) -> str:
 - 保留七种尺寸的 exe 图标和透明 PNG；原有功能及默认 CoolDown 视频保持现有行为。
 - Windows 包继续不附带“小余12主题”及其背景。
 
-如果此前已把 Python 图标固定到任务栏，请先取消固定旧项，再从本版 `VRChat跳舞房助手.exe` 重新固定。程序不会自动修改你的固定项或清理系统图标缓存。
+如果此前已把 Python 图标固定到任务栏，请先取消固定旧项，再从本版 `VRChatDanceAssistant.exe` 重新固定。程序不会自动修改你的固定项或清理系统图标缓存。
 
 ## 下载与启动
 
-下载下方 **VRChatDanceAssistant-windows-x64.zip**，完整解压后运行 `VRChat跳舞房助手/VRChat跳舞房助手.exe`，无需安装 Python。必须保留 `_internal` 等全部文件，其中包含默认视频；不能只复制 exe。
+下载下方 **VRChatDanceAssistant-windows-x64.zip**，完整解压后运行 `VRChatDanceAssistant/VRChatDanceAssistant.exe`，无需安装 Python。必须保留 `_internal` 等全部文件，其中包含默认视频；不能只复制 exe。exe 文件名必须保持纯英文（SteamVR 客户端库无法用中文进程名写日志，VR 面板会报 NoLogPath）；文件夹放在中文路径不受影响。
 
 正常入口按 UAC 提示启动并自动开启缓存服务。程序未签名，UAC 发布者显示为未知。完整步骤见包内 `docs/WINDOWS_PREVIEW.md`。
 

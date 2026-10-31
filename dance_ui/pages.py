@@ -131,7 +131,7 @@ class Pages:
         actions, _ = row(self.steamvr_apply_button, self.steamvr_refresh_button, stretch=True)
         startup.box.addWidget(actions)
         startup.box.addWidget(label(
-            "仅在 Windows 生效。设置时请先启动 SteamVR，再应用启动设置。启动本程序时仍需确认管理员授权；移动程序位置后请重新启用。关闭 SteamVR 不会关闭本程序。",
+            "仅在 Windows 生效。设置时请先启动 SteamVR，再应用启动设置。开启后 SteamVR 启动时通过计划任务静默拉起本程序，不会再弹管理员授权框；移动程序位置后会自动更新启动路径。关闭 SteamVR 不会关闭本程序。",
             muted=True, wrap=True,
         ))
         self.vr_overlay = QCheckBox("SteamVR 面板页")

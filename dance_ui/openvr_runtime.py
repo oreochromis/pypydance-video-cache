@@ -34,6 +34,38 @@ def _runtime_dll_path():
     return None
 
 
+def non_ascii_exe_name():
+    """exe 文件名（不含扩展名）含非 ASCII 字符时返回完整 exe 路径，否则 None。
+
+    vrclient 用进程名构造 vrclient_<进程名>.txt 日志文件，进程名经过的编码
+    转换对中文字符可能失败，导致 init 必报 InitError_Init_NoLogPath——与
+    安装目录是否中文无关（实测：纯英文名的 exe 在中文目录里正常工作；
+    部分中文名如「中文助手」能侥幸通过转换，「跳舞房助手」则必败，
+    所以只要文件名非 ASCII 就视为不可用）。源码运行的 python.exe 是纯
+    英文名，不检查。"""
+    if not getattr(sys, "frozen", False):
+        return None
+    executable = os.path.abspath(sys.executable)
+    stem = os.path.splitext(os.path.basename(executable))[0]
+    try:
+        stem.encode("ascii")
+    except UnicodeEncodeError:
+        return executable
+    return None
+
+
+def describe_probe_error(name):
+    """把探针/openvr 错误名翻译成给用户的中文提示；NoLogPath 且 exe 文件名
+    含中文时给出针对性指引（这是该错误在本软件上的唯一已知成因）。"""
+    if name == "InitError_Init_NoLogPath":
+        location = non_ascii_exe_name()
+        if location:
+            return (f"程序的 exe 文件名包含中文（{location}），SteamVR 的客户端库无法用"
+                    f"中文进程名写日志（错误 NoLogPath）。请把 exe 重命名为纯英文"
+                    f"（例如 VRChatDanceAssistant.exe）后重新启动；文件夹放中文路径不受影响")
+    return name or "未知错误"
+
+
 def import_openvr(logger=None):
     """导入 openvr 模块；Windows 上优先使用 SteamVR 运行时的客户端 DLL。"""
     with _lock:

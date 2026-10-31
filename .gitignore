@@ -34,3 +34,9 @@ error.log
 .vscode/
 .DS_Store
 Thumbs.db
+tools/wannadance_gui_settings.json
+
+# Personal-use tools (not for release/public)
+WannaDance批量下载.bat
+tools/download_wannadance.py
+tools/wannadance_gui.pyw
