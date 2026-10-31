@@ -4,9 +4,9 @@
 
 为 VRChat 的 PyPyDance / WannaDance 跳舞房提供本地视频缓存、队列预加载和永久曲库管理。**本软件仅支持 Windows x64。**
 
-本 Fork 基于 [oreochromis/pypydance-video-cache](https://github.com/oreochromis/pypydance-video-cache) 继续开发，原作者为 **Bilibili @鲨鲨比亚Sharkspeare**。保留原有 Python 缓存核心与命令行入口，使用 Qt for Python 重构桌面界面，并增加日常使用功能。
+作者为 **Bilibili @鲨鲨比亚Sharkspeare**（GitHub [@oreochromis](https://github.com/oreochromis)）。3.x 版本保留原有 Python 缓存核心与命令行入口，使用 Qt for Python 重构桌面界面并增加日常使用功能，其中界面重构等部分包含 [@Xiaoyu12-CPU](https://github.com/Xiaoyu12-CPU)（小余12）贡献的代码。
 
-**[下载 v3.0.1 正式版](https://github.com/Xiaoyu12-CPU/pypydance-video-cache/releases/tag/v3.0.1)** · **[直接下载 Windows x64 ZIP](https://github.com/Xiaoyu12-CPU/pypydance-video-cache/releases/download/v3.0.1/PyPyDanceCache-windows-x64.zip)**
+**[下载最新正式版](https://github.com/oreochromis/pypydance-video-cache/releases/latest)**（选择 VRChatDanceAssistant-windows 开头的 x64 ZIP）
 
 ## 下载与使用
 
@@ -20,22 +20,24 @@
 
 如果升级后仍看到之前固定的 Python 图标，请退出旧版本并打开新版 exe；已固定的旧项可先取消固定，再从新版程序重新固定。
 
-## 相比 Fork 前更新了什么？
+## 相比 V1.2 旧版更新了什么？
 
-对比基线为原项目的 [V1.2 源码提交 `5efd712`](https://github.com/oreochromis/pypydance-video-cache/tree/5efd712073d696e180ffeedfbfe51afd293f702e)，当前版本为本 Fork 的 `v3.0.1`。
+对比基线为 [V1.2 源码提交 `5efd712`](https://github.com/oreochromis/pypydance-video-cache/tree/5efd712073d696e180ffeedfbfe51afd293f702e)（tkinter 单窗口时代）。
 
-原版已经具备本地缓存、队列预加载、永久曲库、YouTube 源缓存、CDN 测速、曲库维护和 Cool Down。本 Fork 在这些能力上继续改进，主要变化如下：
+V1.2 已经具备本地缓存、队列预加载、永久曲库、YouTube 源缓存、CDN 测速、曲库维护和 Cool Down。3.x 在这些能力上继续改进，主要变化如下：
 
-| 项目 | Fork 前 | 当前版本 |
+| 项目 | V1.2 旧版 | 当前版本 |
 | --- | --- | --- |
+| 支持房间 | PyPyDance（含 YouTube 源） | PyPyDance + WannaDance |
 | 桌面界面 | tkinter 单窗口，设置、队列、下载和日志集中展示 | Qt for Python 重构，分为“运行／存储／设置／外观”四页 |
 | 外观设置 | 基础控件样式 | 默认浅蓝布局，支持深色、自定义主题、背景、透明度、缩放和密度，自动保存到本机 |
 | CDN 优选 | 已有快速测速、扩大范围抽样测速及推荐 IP | 列表展示结果，可自行选择使用；新增本机常用 CDN 收藏，支持去重、保留和删除 |
-| SteamVR 联动 | 手动打开程序 | 新增“跟随 SteamVR 启动”选项，通过最高权限计划任务静默拉起，无 UAC 弹窗 |
+| SteamVR 联动 | 手动打开程序 | “跟随 SteamVR 启动”选项，通过最高权限计划任务静默拉起，无 UAC 弹窗 |
+| VR 内面板 | 无 | SteamVR 菜单面板：查看歌曲队列与缓存状态、启停服务、切换 Cool Down；独立子进程运行，崩溃不影响主程序 |
 | Cool Down | 已有功能，需要自行选择放松视频 | 随包提供默认视频，保留自选能力，并提供切回内置视频的入口 |
 | 运行信息 | 已有歌曲队列、下载进度、速度和日志 | 分开呈现歌曲、下载及服务状态，补充失败、取消和恢复提示，支持复制、导出日志 |
 | 设置保存 | 在原窗口中编辑并保存 | 草稿与应用分离，加强参数校验、保存失败提示及目录保护，避免测速操作顺带提交其他设置 |
-| 程序图标 | 原有图标 | 新 PY 对话框图标，覆盖应用、窗口及 Windows exe，提供七种图标尺寸，并设置独立的 Windows 任务栏应用身份 |
+| 程序图标 | 原有图标 | DA 对话框图标，覆盖应用、窗口及 Windows exe，提供七种图标尺寸，并设置独立的 Windows 任务栏应用身份 |
 | 构建与分发 | 原有单文件 exe 打包方式 | 完整目录 ZIP，附 SHA-256 与构建报告，发布前执行自动测试和实际打包程序检查 |
 
 新版 GUI 使用 Qt、Pillow 和 OpenVR 等依赖，分发方式改为完整目录包；原有命令行缓存入口继续保留。
@@ -161,9 +163,9 @@ Windows 发布构建会执行完整自动化测试，并实际启动打包后的
 
 ## 来源与许可
 
-- 原作者：Bilibili **@鲨鲨比亚Sharkspeare**。
-- 上游项目：[oreochromis/pypydance-video-cache](https://github.com/oreochromis/pypydance-video-cache)。
-- 本 Fork：[Xiaoyu12-CPU/pypydance-video-cache](https://github.com/Xiaoyu12-CPU/pypydance-video-cache)。
+- 作者：Bilibili **@鲨鲨比亚Sharkspeare**（GitHub [@oreochromis](https://github.com/oreochromis)）。
+- 贡献者：[@Xiaoyu12-CPU](https://github.com/Xiaoyu12-CPU)（小余12），贡献了 3.x Qt 界面重构等代码。
+- 项目仓库：[oreochromis/pypydance-video-cache](https://github.com/oreochromis/pypydance-video-cache)。
 - 原理参考：[加载失败分析](https://github.com/kiyonya/why-my-dance-video-cannot-play)、[VRCDancePreloader](https://github.com/wzhqwq/VRCDancePreloader)。
 
-项目代码沿用 [MIT License](LICENSE)，保留原作者版权与署名。Qt for Python、Pillow、OpenVR 等依赖使用各自许可，Windows 分发包内的 `THIRD_PARTY_LICENSES` 提供相应声明。
+项目代码沿用 [MIT License](LICENSE)。Qt for Python、Pillow、OpenVR 等依赖使用各自许可，Windows 分发包内的 `THIRD_PARTY_LICENSES` 提供相应声明。

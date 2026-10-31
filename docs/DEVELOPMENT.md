@@ -2,7 +2,7 @@
 
 ## 范围与来源
 
-开发基线是 [oreochromis/pypydance-video-cache](https://github.com/oreochromis/pypydance-video-cache) 的提交 `5efd712073d696e180ffeedfbfe51afd293f702e`，原作者为 Bilibili @鲨鲨比亚Sharkspeare。当前 fork 为 [Xiaoyu12-CPU/pypydance-video-cache](https://github.com/Xiaoyu12-CPU/pypydance-video-cache)。
+开发基线是 [oreochromis/pypydance-video-cache](https://github.com/oreochromis/pypydance-video-cache) 的提交 `5efd712073d696e180ffeedfbfe51afd293f702e`，作者为 Bilibili @鲨鲨比亚Sharkspeare（oreochromis）。Qt 界面重构（四页布局的起点）由 [@Xiaoyu12-CPU](https://github.com/Xiaoyu12-CPU)（小余12）贡献，后续版本在本仓库继续开发。
 
 本轮把界面整理成「运行／存储／设置／外观」四页。`dance_cache.py` 继续负责缓存、网络、队列观察、维护与命令行流程；允许补充 UI 所需的状态与结果，但不重写后端。`config.json` 和 `mapping.json` 保持原有数据与路径兼容性。
 
@@ -169,7 +169,7 @@ python -m PyInstaller --clean --noconfirm --onedir --windowed --name VRChatDance
 
 该自动检查参数仅与 `--demo` 一起使用，检查四页导航、SVG 资源、默认浅蓝主题及使用临时合成图片的 Pillow 到 Qt 背景渲染，写 JSON 后自动退出。报告必须确认 `win32`、Qt `windows` 平台和 `frozen=true`，才能由 `tools/package_windows.py` 生成完整目录 ZIP、SHA-256 及构建信息。实际报告也保存在包内 `docs/build-info.json`。
 
-普通推送只构建。只有本 Fork 的 `main` 分支 push 且提交消息包含 `[publish-release]` 时才发布正式版。`tools/publish_windows_preview.py` 保留历史文件名，在上传前后核对版本、测试、源码提交、ZIP 和远程附件 SHA，恢复同版本草稿后发布 `v3.0.1`，设为非预发行版及最新版本；不覆盖已发布 Release 或冲突标签。
+普通推送只构建。只有本仓库（oreochromis/pypydance-video-cache）的 `main` 分支 push 且提交消息包含 `[publish-release]` 时才发布正式版。`tools/publish_windows_preview.py` 在上传前后核对版本、测试、源码提交、ZIP 和远程附件 SHA，不覆盖已发布 Release 或冲突标签。
 
 冻结演示检查会加载打包的 Windows x64 OpenVR DLL，但不初始化或注册 SteamVR；只收集本机平台的 64 位 DLL 与许可。冻结演示检查仍使用示例数据，不验证 UAC 人工点击、真实服务、hosts 恢复、旧曲库兼容或 VRChat 请求。用户试用说明见 [WINDOWS_PREVIEW.md](WINDOWS_PREVIEW.md)。
 
